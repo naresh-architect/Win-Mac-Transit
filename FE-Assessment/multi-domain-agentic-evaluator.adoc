@@ -1,0 +1,1233 @@
+= Multi-Domain Agentic Evaluator — Design Document
+:author: Frontier Engineering Programme
+:doctype: book
+:icons: font
+:revdate: {docdate}
+:revnumber: 4.0
+:revremark: Final edition — adds Domain D (Nexus, Week 6 integrative capstone) as a composition layer over Domains A, B, and C
+:sectnumlevels: 5
+:sectnums: 5
+:source-highlighter: highlight.js
+:toc: right
+:toclevels: 4
+
+_Design and effort estimate for an agentic system that evaluates capstone submissions across four
+domains: RAG (CatalogueIQ), Agentic AI / Multi-Agent Systems (SupportPilot, CareRoute), Model Context
+Protocol (BankForge), and the Week 6 integrative capstone (Nexus)_ +
+Companion document to: *Capstone Project — CatalogueIQ*, and *6-Week Immersive Programme — Frontier
+Engineering (BH Programme)*, Weeks 3–6
+
+---
+
+== Purpose and Scope
+
+This document specifies a single, agentic evaluator that assesses capstone submissions across four
+domains from the programme:
+
+[cols="1,3,2", options="header"]
+|===
+| Domain | Capstone(s) covered | Programme week
+
+| A — RAG
+| CatalogueIQ (and, by the same pattern, CodeCompass / CourseCompass / ClaimSense)
+| Week 3
+
+| B — Agentic AI / Multi-Agent Systems
+| SupportPilot (confidence-threshold escalation), CareRoute (hard category-based escalation)
+| Week 4
+
+| C — Model Context Protocol
+| BankForge (three-server MCP ecosystem for digital banking)
+| Week 5
+
+| D — Integrative Capstone
+| Nexus (unified financial services concierge combining structured intake, RAG, multi-agent orchestration, and MCP in one deployed system)
+| Week 6
+|===
+
+Domains A, B, and C are evaluated as independent technology tracks, each with its own three-tier
+evaluator (Sections 3–5). **Domain D is architecturally different: it is not a fourth technology to
+check, it is a composition layer.** Nexus's own capstone brief states its assessment principle
+explicitly — *"integration, not reimplementation"* — and the evaluator is built to match that principle
+exactly: Domain D reuses Domains A, B, and C's agents as subroutines, and adds exactly three new agents
+whose entire job is to check that the layers genuinely talk to each other in one live request, rather
+than sitting disconnected in the same repository (Section 6).
+
+IMPORTANT: SupportPilot, CareRoute, and BankForge do not publish an explicit weighted percentage rubric
+in their source specifications — only qualitative deliverables and evaluation criteria. Sections 4.1 and
+5.1 propose a weighted rubric for each, derived directly from those stated requirements. **Nexus is
+different: it already ships with an official, facilitator-published 8-criterion weighted rubric**
+(Section 6.1), so no proposal step is needed for Domain D.
+
+---
+
+== Shared Architecture
+
+=== 2.1 Domain Router
+
+The first agent in the pipeline, ahead of any domain-specific checking, classifies which capstone
+domain a submission belongs to.
+
+[cols="2,3", options="header"]
+|===
+| Agent | Responsibility
+
+| Domain router
+| Inspects the submitted repo (README title, directory names, key dependencies) and tags the submission with a `domain` field before dispatch. Signals used: `ragas` + `faiss`/`chromadb` alone → Domain A; `autogen`/`crewai` + escalation logic alone → Domain B; `fastmcp`/`mcp` + a 3-service `docker-compose.yml` alone → Domain C; **all of the above present together, plus a 4+ service `docker-compose.yml` and a single request-handling entry point that calls into intake, retrieval, multi-agent, and MCP code paths in sequence** → Domain D
+|===
+
+If the router's confidence is low (a submission mixes signals, or the repo structure is ambiguous), the
+submission is escalated to a human facilitator to confirm the domain rather than guessed — the same
+"don't silently proceed on an uncertain classification" principle used throughout this document.
+
+=== 2.2 Common Data Model
+
+Every submission, in every domain, is represented with the same JSON shape. Domain-specific agents only
+ever add entries to `checks` and populate domain-specific keys inside `rubric_scores` — they never
+change the shape itself. For Domain D, `checks` additionally accumulates entries produced by Domain A/B/C
+agents running as subroutines, tagged with which layer they inspected.
+
+[source,json]
+----
+{
+  "submission_id": "team-04",
+  "domain": "D",
+  "capstone_variant": "Nexus",
+  "checks": [
+    {
+      "criterion": "end_to_end_integration",
+      "check_name": "intake_output_consumed_by_retrieval",
+      "result": "PASS",
+      "confidence": "HIGH",
+      "evidence": "trace shows classified.product_line='insurance' selected the policy-document retriever, not a fixed default path",
+      "source_tier": 2,
+      "source_layer": "integration_tracer"
+    },
+    {
+      "criterion": "grounded_reconciled_retrieval",
+      "check_name": "structured_and_unstructured_reconciled",
+      "result": "PASS",
+      "confidence": "HIGH",
+      "evidence": "reused from Domain A retrieval/citation checker",
+      "source_tier": 2,
+      "source_layer": "domain_a_agent"
+    }
+  ],
+  "rubric_scores": {
+    "end_to_end_integration": null,
+    "structured_intake_quality": null,
+    "grounded_reconciled_retrieval": null,
+    "multi_agent_orchestration_and_escalation": null,
+    "mcp_based_tool_access": null,
+    "guardrails_stack": null,
+    "deployment_evidence": null,
+    "demo_and_debrief": null
+  },
+  "escalate_to_human": false,
+  "escalation_reason": null
+}
+----
+
+=== 2.3 Common Design Rules
+
+* **Structured hand-offs, not raw transcripts.** Every agent passes a typed JSON object to the next
+  agent — never a full conversation dump.
+* **Confidence-tagged findings, not silent pass/fail.** Every check is recorded with a confidence level
+  (HIGH / MEDIUM / LOW).
+* **A fixed, facilitator-owned grading environment.** Every tier that touches a running system evaluates
+  against one facilitator-provided dataset and/or test-scenario set per domain.
+* **Never let the evaluator silently pass an unverifiable claim as true.**
+* **Domain D never re-derives what Domain A/B/C already checked.** If Domain A's retrieval/citation
+  checker already confirmed grounded retrieval, Domain D's agents consume that finding rather than
+  re-running an equivalent check from scratch — this is what makes Domain D's incremental cost low
+  relative to A, B, and C (Section 7.1).
+
+=== 2.4 Observability — The Teenager Framework
+
+Every agent call, in every domain and every tier, is wrapped and logged: which agent ran, what went in,
+what came out, tokens spent, and latency. This is required infrastructure for Domain D specifically —
+the Integration tracer (Section 6.3) cannot function without a complete, structured trace of every
+layer's input and output already being captured.
+
+---
+
+== Domain A — RAG Capstones (CatalogueIQ)
+
+=== 3.1 What This Domain's Evaluator Verifies, By Tier
+
+CatalogueIQ's published rubric weights six criteria: Working system (25%), Chunking and ingestion
+quality (15%), Retrieval design (20%), RAGAS evaluation (20%), Evaluation report depth and honesty (10%),
+and Demo and panel Q&A (10%).
+
+[cols="3,1,3,3,3", options="header"]
+|===
+| Criterion | Weight | Tier 1 confidence | Tier 2 confidence | Tier 3 confidence
+
+| Working system
+| 25%
+| None — cannot confirm the system runs
+| High — actually executed
+| High (unchanged)
+
+| Chunking and ingestion quality
+| 15%
+| Medium — code structure only
+| High — actual chunk quality observed
+| High (unchanged)
+
+| Retrieval design
+| 20%
+| Medium — code presence only
+| High — effect observed directly
+| High (unchanged)
+
+| RAGAS evaluation
+| 20%
+| Low — harness presence only
+| High — independently recomputed
+| High (unchanged)
+
+| Evaluation report depth and honesty
+| 10%
+| High — a document-review task
+| High (unchanged)
+| High (unchanged)
+
+| Demo and panel Q&A
+| 10%
+| None
+| None
+| Medium — automated proxy, not a substitute for human judgement (Section 3.9)
+|===
+
+=== 3.2 Tier 1 — Static Evaluator (Report + Code Review Only)
+
+[cols="2,3,3", options="header"]
+|===
+| Agent | Responsibility | Input / Output
+
+| Intake agent
+| Parses the submitted repository: README, source tree, and the evaluation report (Markdown or PDF)
+| Input: repo path. Output: file manifest + extracted report text
+
+| Code static analyzer
+| Checks, via AST/regex scanning plus an LLM judgment pass, whether required patterns exist: CSV/Markdown/HTML loaders, two distinct chunking functions, embedding calls, FAISS/Chroma usage, a query-expansion step, citation formatting, conversational memory, a RAGAS harness
+| Input: source files. Output: checklist with per-item confidence
+
+| Report reviewer
+| Checks the report against the required section table; flags missing or templated sections
+| Input: report text. Output: section-completeness findings
+
+| Rubric scorer / aggregator
+| Combines the two signal sets into a rubric-weighted score with a confidence flag on every line item
+| Input: checklist + findings. Output: `rubric_scores` object (Section 2.2 schema)
+
+| Feedback generator
+| Turns the score into a facilitator-readable comment sheet
+| Input: scorer output. Output: Markdown feedback report
+|===
+
+=== 3.3 Tier 1 Design Notes
+
+* No code execution — therefore **no sandbox, no security isolation, no dependency management** is
+  required.
+* The code analyzer's most important behaviour is catching **unverifiable claims** — a report can state a
+  RAGAS score its code never actually produced. Flag "reported metric with no corresponding executed
+  call" as LOW confidence.
+* Best framed to facilitators as a **triage pass**, not a final grade.
+
+=== 3.4 Tier 1 Effort Estimate
+
+[cols="3,2", options="header"]
+|===
+| Task | Effort (1 engineer)
+
+| Repo/report ingestion and parsing
+| 1–2 days
+
+| Code static analyzer
+| 2–3 days
+
+| Report reviewer agent
+| 1–2 days
+
+| Scorer/aggregator + feedback formatting
+| 1–2 days
+
+| Calibration against 5–10 submissions
+| 1–2 days
+
+| *Total*
+| *~8–11 engineer-days (roughly 2 weeks)*
+|===
+
+CAUTION: Biggest risk at this tier is **false confidence**. Never present a Tier 1 score as final
+without disclosing which line items are LOW confidence.
+
+=== 3.5 Tier 2 — Static Evaluator + Live Execution
+
+[cols="2,3", options="header"]
+|===
+| Agent | Responsibility
+
+| Sandbox runner
+| Spins up an isolated container, installs dependencies, ingests the facilitator-fixed ShopSmart India dataset, starts the system behind a standard interface
+
+| Query tester
+| Sends the 20-question test set through the running system; captures answer, citations, and retrieved chunks per query
+
+| Retrieval and citation checker
+| Cross-checks each citation against ground truth; flags hallucinated specs
+
+| Comparative-query specialist
+| Inspects "best X under ₹Y" queries; counts distinct products retrieved and compared
+
+| RAGAS executor
+| Independently runs faithfulness, answer relevancy, and context precision; reconciles against self-reported numbers
+|===
+
+=== 3.6 Tier 2 Design Notes
+
+* **Standardise the submission interface before Day 1** — require a function or HTTP endpoint contract.
+* **Fixed grading dataset** — re-run against one facilitator-provided corpus, not the pair's own.
+* **Sandbox security is a first-class concern** — Docker with no unnecessary egress, resource/time
+  limits, fresh container per run.
+* **Design for partial failure** — surface static findings even when the sandbox run fails.
+
+=== 3.7 Tier 2 Effort Estimate
+
+[cols="3,2", options="header"]
+|===
+| Task | Effort (1 engineer, or 1–2 for the sandbox work)
+
+| Everything in Tier 1
+| ~8–11 days
+
+| Submission interface spec + adapter layer
+| 2–3 days
+
+| Sandbox/Docker harness
+| 4–6 days
+
+| Query tester + fixed grading dataset
+| 2–3 days
+
+| Retrieval/citation checker + comparative-query specialist
+| 3–4 days
+
+| RAGAS executor + reconciliation
+| 2–3 days
+
+| Calibration
+| 3–5 days
+
+| *Total*
+| *~24–35 engineer-days (roughly 5–7 weeks)*
+|===
+
+CAUTION: Expect 20–30% of submissions to fail to boot cleanly on first attempt for reasons unrelated to
+RAG quality. Budget explicit review time for "system did not run" cases.
+
+=== 3.8 Tier 3 — Full Pipeline with Simulated Panel Q&A
+
+[cols="2,3", options="header"]
+|===
+| Agent | Responsibility
+
+| Adversarial prober
+| Generates the "likely panel questions" as live test cases
+
+| Panel simulator
+| Reads the Tier 2 trace and dynamically generates targeted follow-up questions grounded in that submission's real behaviour
+
+| Failure-injection agent
+| Constructs edge cases per query type to test graceful degradation
+
+| Escalation / coach agent
+| Synthesises a coaching report; hard-escalates submissions near a rubric threshold
+|===
+
+=== 3.9 Tier 3 Design Notes
+
+IMPORTANT: The "Demo and panel Q&A" line is partly a human-communication competency. Tier 3's output is
+a rehearsal report and facilitator prep brief — **not the system of record for that 10% of the score.**
+
+=== 3.10 Tier 3 Effort Estimate
+
+[cols="3,2", options="header"]
+|===
+| Task | Effort (1–2 engineers)
+
+| Everything in Tier 2
+| ~24–35 days
+
+| Full observability/tracing layer
+| 3–4 days
+
+| Adversarial/edge-case query generator
+| 3–4 days
+
+| Grounded, trace-aware follow-up question generator
+| 5–7 days
+
+| Escalation orchestration
+| 2–3 days
+
+| Coaching report synthesis
+| 2–3 days
+
+| Calibration and fairness tuning
+| 5–8 days
+
+| *Total*
+| *~44–64 engineer-days (roughly 9–13 weeks solo; ~5–7 weeks for a pair)*
+|===
+
+---
+
+== Domain B — Agentic AI / Multi-Agent Capstones (SupportPilot, CareRoute)
+
+=== 4.1 Proposed Rubric
+
+[cols="3,1,3", options="header"]
+|===
+| Criterion | Weight | What it checks
+
+| Multi-agent architecture — distinct roles, clean hand-offs
+| 20%
+| Are classify/retrieve/draft/validate/escalate genuinely separate components?
+
+| Classification and retrieval accuracy
+| 15%
+| Correct typing/prioritisation, correct knowledge/DB record retrieval
+
+| Draft quality and validation
+| 15%
+| Accurate, on-tone, compliant draft; validator agent genuinely catches bad drafts
+
+| Escalation logic correctness
+| 25%
+| SupportPilot: confidence-threshold fires correctly. CareRoute: hard, category-based rule enforced in code, provably non-bypassable
+
+| Architecture document
+| 15%
+| Clearly explains roles, hand-offs, escalation design
+
+| Demo and debrief
+| 10%
+| Team can trace one request through every agent role live
+|===
+
+=== 4.2 Tier 1 — Static Evaluator
+
+[cols="2,3", options="header"]
+|===
+| Agent | Responsibility
+
+| Intake agent (shared)
+| Parses repo, README, and architecture document
+
+| Agent-role static analyzer
+| Confirms genuinely separate components for classify/retrieve/draft/validate/escalate
+
+| Escalation-logic static analyzer
+| Distinguishes a *soft* rule (prompt instruction, bypassable) from a *hard* rule (explicit code check). Flags CareRoute submissions using only a soft rule as **critical**
+
+| Architecture document reviewer
+| Checks the document explains roles, hand-offs, and the always-escalate category list
+
+| Rubric scorer / aggregator (shared)
+| Produces the Section 4.1 weighted score
+|===
+
+=== 4.3 Tier 1 Effort Estimate
+
+[cols="3,2", options="header"]
+|===
+| Task | Effort (1 engineer)
+
+| Agent-role static analyzer
+| 1–2 days
+
+| Escalation-logic static analyzer
+| 2–3 days
+
+| Architecture document reviewer
+| 1–2 days
+
+| Scorer/aggregator adaptation + calibration
+| 2–3 days
+
+| *Total*
+| *~6–9 engineer-days*
+|===
+
+=== 4.4 Tier 2 — Static + Live Execution
+
+[cols="2,3", options="header"]
+|===
+| Agent | Responsibility
+
+| Agentic sandbox runner
+| Boots the pipeline behind `handle(request) -> {"response", "trace", "escalated"}`
+
+| Scenario tester
+| Sends routine, low-confidence, and — for CareRoute — every always-escalate category through the pipeline
+
+| Trace verifier
+| Confirms the full classify→retrieve→draft→validate→escalate chain executed correctly
+
+| Escalation verifier
+| Confirms threshold logic (SupportPilot) and confirms CareRoute escalates every hard category regardless of injected high confidence
+
+| Case-closure / output checker
+| Verifies the required structured output artifact
+|===
+
+=== 4.5 Tier 2 Design Notes
+
+CAUTION: The always-escalate test scenarios for CareRoute involve simulated mentions of chest pain,
+breathing difficulty, and self-harm. Have these authored or reviewed by someone with appropriate
+clinical/safeguarding background, clearly labelled as synthetic fixtures.
+
+=== 4.6 Tier 2 Effort Estimate
+
+[cols="3,2", options="header"]
+|===
+| Task | Effort (1 engineer)
+
+| Everything in Tier 1
+| ~6–9 days
+
+| Agentic sandbox runner + adapter
+| 3–4 days
+
+| Scenario tester + test-scenario construction
+| 4–6 days
+
+| Trace verifier
+| 2–3 days
+
+| Escalation verifier
+| 2–3 days
+
+| Case-closure/output checker + calibration
+| 1–3 days
+
+| *Total*
+| *~18–26 engineer-days (roughly 4–5 weeks)*
+|===
+
+=== 4.7 Tier 3 — Full Pipeline with Panel Simulation
+
+[cols="2,3", options="header"]
+|===
+| Agent | Responsibility
+
+| Rephrasing-bypass prober
+| Generates paraphrased/obfuscated always-escalate trigger phrases and confirms escalation still fires — directly implements the capstone's own stated evaluation method for CareRoute
+
+| Confidence-manipulation prober
+| For SupportPilot, tests whether threshold logic is gameable
+
+| Bias-and-fairness prober
+| Tests whether otherwise-identical requests from different synthetic profiles receive different treatment
+
+| Escalation / coach agent (shared)
+| Hard-escalates any submission where a bypass was found, regardless of every other score
+|===
+
+=== 4.8 Tier 3 Effort Estimate
+
+[cols="3,2", options="header"]
+|===
+| Task | Effort (1–2 engineers)
+
+| Everything in Tier 2
+| ~18–26 days
+
+| Rephrasing-bypass prober
+| 5–7 days
+
+| Confidence-manipulation prober
+| 2–3 days
+
+| Bias-and-fairness prober
+| 2–3 days
+
+| Coaching report synthesis + escalation orchestration
+| 2–3 days
+
+| Calibration and fairness tuning
+| 3–5 days
+
+| *Total*
+| *~30–42 engineer-days (roughly 6–8 weeks solo; ~4–5 weeks for a pair)*
+|===
+
+---
+
+== Domain C — MCP Capstones (BankForge)
+
+=== 5.1 Proposed Rubric
+
+[cols="3,1,3", options="header"]
+|===
+| Criterion | Weight | What it checks
+
+| MCP server implementation — Tools, Resources, Prompts
+| 25%
+| All three MCP primitives genuinely exposed across three required servers
+
+| Security and scoped access control
+| 20%
+| Access genuinely scoped per request, strong auth, service isolation
+
+| Data minimisation
+| 15%
+| Servers return only needed fields, not over-fetched data
+
+| Compliance check demonstrated
+| 10%
+| At least one real compliance rule enforced and demonstrable
+
+| Multi-server composition / end-to-end task completion
+| 15%
+| Real multi-step task completed via all three servers, no hardcoded glue bypassing MCP
+
+| Architecture document, deployment evidence, and demo
+| 15%
+| Containerised deployment demonstrated, end-to-end trace narrated
+|===
+
+=== 5.2 Tier 1 — Static Evaluator
+
+[cols="2,3", options="header"]
+|===
+| Agent | Responsibility
+
+| Intake agent (shared)
+| Parses repo, README, and architecture document
+
+| MCP primitive checker
+| Statically scans for tool/resource decorators across exactly three server modules; flags Tools-only submissions as incomplete
+
+| Security static analyzer
+| Checks access-scoping logic, flags hardcoded credentials as **critical**, confirms `.env`-based config
+
+| Deployment artifact checker
+| Confirms `Dockerfile` per server, `docker-compose.yml`, health-check endpoint code
+
+| Rubric scorer / aggregator (shared)
+| Produces the Section 5.1 weighted score
+|===
+
+=== 5.3 Tier 1 Effort Estimate
+
+[cols="3,2", options="header"]
+|===
+| Task | Effort (1 engineer)
+
+| MCP primitive checker
+| 2–3 days
+
+| Security static analyzer
+| 2–3 days
+
+| Deployment artifact checker
+| 1–2 days
+
+| Scorer/aggregator adaptation + calibration
+| 2 days
+
+| *Total*
+| *~7–10 engineer-days*
+|===
+
+=== 5.4 Tier 2 — Static + Live Execution
+
+[cols="2,3", options="header"]
+|===
+| Agent | Responsibility
+
+| MCP server runner
+| Brings up all three MCP servers via `docker compose up` in an isolated network
+
+| Discovery and tool-call tester
+| Discovery pass against each server, calls every tool, confirms structured results
+
+| Scoped-access verifier
+| Attempts an out-of-scope data request; confirms it is denied
+
+| Compliance-check verifier
+| Constructs a scenario that should trip a compliance rule; confirms it is blocked or flagged
+
+| Health-check and log auditor
+| Hits health endpoints, checks structured logs for correct format and absence of secrets/PII
+|===
+
+=== 5.5 Tier 2 Design Notes
+
+The scoped-access verifier is the single highest-value check in this tier — a direct functional proof
+of the capstone's "security and compliance as first-class requirements" mandate.
+
+=== 5.6 Tier 2 Effort Estimate
+
+[cols="3,2", options="header"]
+|===
+| Task | Effort (1–2 engineers)
+
+| Everything in Tier 1
+| ~7–10 days
+
+| MCP server runner (Docker Compose orchestration)
+| 5–7 days
+
+| Discovery and tool-call tester
+| 3–4 days
+
+| Scoped-access verifier
+| 4–5 days
+
+| Compliance-check verifier
+| 3–4 days
+
+| Health-check and log auditor
+| 2–3 days
+
+| Calibration
+| 3–5 days
+
+| *Total*
+| *~26–38 engineer-days (roughly 5–8 weeks)*
+|===
+
+=== 5.7 Tier 3 — Full Pipeline with Panel Simulation
+
+[cols="2,3", options="header"]
+|===
+| Agent | Responsibility
+
+| Privilege-escalation prober
+| Attempts prompt-injection-style requests to get an MCP server to return out-of-scope data
+
+| Multi-server composition tester
+| Drives one realistic end-to-end task through all three servers, confirms no hardcoded bypass
+
+| Deployment resilience prober
+| Kills one container mid-task; confirms clear logging and safe failure
+
+| Escalation / coach agent (shared)
+| Hard-escalates any submission with even one successful unauthorised access
+|===
+
+=== 5.8 Tier 3 Effort Estimate
+
+[cols="3,2", options="header"]
+|===
+| Task | Effort (1–2 engineers)
+
+| Everything in Tier 2
+| ~26–38 days
+
+| Privilege-escalation prober
+| 5–7 days
+
+| Multi-server composition tester
+| 4–5 days
+
+| Deployment resilience prober
+| 2–3 days
+
+| Coaching report synthesis + escalation orchestration
+| 2–3 days
+
+| Calibration and fairness tuning
+| 3–5 days
+
+| *Total*
+| *~40–58 engineer-days (roughly 8–12 weeks solo; ~5–7 weeks for a pair)*
+|===
+
+---
+
+== Domain D — Integrative Capstone (Nexus)
+
+=== 6.1 Official Rubric (Published, Not Proposed)
+
+Unlike Domains B and C, Nexus ships with an explicit, facilitator-published 8-criterion rubric. The
+evaluator targets this rubric directly.
+
+[cols="3,1,3", options="header"]
+|===
+| Criterion | Weight | What the reviewer checks
+
+| End-to-end integration
+| 25%
+| A single real request genuinely flows through all four layers, not four disconnected demos
+
+| Structured intake quality
+| 10%
+| Extraction validated with Pydantic before downstream use; no silent proceeding on invalid extraction
+
+| Grounded, reconciled retrieval
+| 15%
+| Account-specific data correctly reconciled with unstructured policy/product content, with citations
+
+| Multi-agent orchestration and escalation
+| 15%
+| Distinct agent roles demonstrable; confidence-based and hard category-based escalation both work and cannot be talked around
+
+| MCP-based tool access
+| 15%
+| All backend reads/writes go through MCP servers with scoped access; no hardcoded bypass
+
+| Guardrails stack
+| 10%
+| Prompt injection defence, input sanitisation, output filtering, and PII redaction all demonstrably active
+
+| Deployment evidence
+| 5%
+| Runs via Docker Compose with a working health check and structured logs
+
+| Demo and debrief
+| 5%
+| Team clearly narrates the end-to-end trace and design trade-offs
+|===
+
+=== 6.2 Design Principle — Composition, Not Reimplementation
+
+Nexus's own capstone brief states its assessment principle explicitly: *"the core assessment principle
+for Week 6 is integration, not reimplementation."* The evaluator is built to match. Five of the eight
+rubric criteria are verified by **running Domain A, B, and C's existing Tier 2 agents against Nexus's
+endpoints, unchanged** — no new agent code is needed for them. Only three genuinely new agents are
+required, and they exist specifically to check the one thing no single-domain agent can see: whether the
+layers actually connect in one live request.
+
+[cols="3,3", options="header"]
+|===
+| Nexus rubric criterion | How it is verified
+
+| Structured intake quality (10%)
+| Reused directly from Domain A/B's intake-validation pattern
+
+| Grounded, reconciled retrieval (15%)
+| Reused directly from Domain A's retrieval/citation checker and comparative-query logic
+
+| Multi-agent orchestration and escalation (15%)
+| Reused from Domain B's trace verifier; hard-escalation non-bypassability reused from Domain B's rephrasing-bypass prober, retargeted at Nexus's hardship/safeguarding/compliance-override categories
+
+| MCP-based tool access (15%)
+| Reused from Domain C's discovery/tool-call tester and scoped-access verifier
+
+| Deployment evidence (5%)
+| Reused from Domain C's deployment artifact checker and health-check auditor
+
+| End-to-end integration (25%)
+| **New** — Integration tracer (Section 6.4)
+
+| Guardrails stack (10%)
+| **New** — Guardrails checker (Section 6.4)
+
+| Demo and debrief (5%)
+| Reused panel-simulation pattern from Domain A/B (proxy only, same limitation as elsewhere)
+|===
+
+=== 6.3 Tier 1 — Static Evaluator
+
+[cols="2,3", options="header"]
+|===
+| Agent | Responsibility
+
+| Intake agent (shared)
+| Parses repo, README, and architecture document
+
+| Integration wiring checker
+| **New.** Statically traces imports and function calls to confirm the intake module's output type is actually consumed as the retrieval module's input type, which is in turn consumed by the multi-agent module, which is in turn the only caller of the MCP client code — catching hardcoded, disconnected components before any code even runs
+
+| Guardrails module presence checker
+| **New.** Confirms dedicated modules exist for input sanitisation, prompt injection defence, output filtering, and PII redaction — flags a submission that only has Pydantic validation (Week 2 layer) and calls it "guardrails" as a **critical finding**, since the spec explicitly distinguishes these layers (Section 4.5a)
+
+| Reused Domain A/B/C static analyzers
+| Applied to the relevant sub-module of the Nexus codebase (e.g. Domain C's MCP primitive checker run against Nexus's MCP client modules)
+
+| Rubric scorer / aggregator (shared)
+| Produces the Section 6.1 weighted score
+|===
+
+=== 6.4 Tier 2 — Static + Live Execution
+
+[cols="2,3", options="header"]
+|===
+| Agent | Responsibility
+
+| Reused Domain A/B/C sandbox runners and testers
+| Pointed at Nexus's endpoints instead of a standalone capstone; produce most of the raw findings for five of the eight rubric criteria (Section 6.2)
+
+| Integration tracer
+| **New.** Takes one real cross-product request (e.g. "can I pay my insurance premium from my savings account, and does my policy cover that auto-debit?"), and — using the Teenager Framework trace — confirms the *output of layer N is actually consumed as the input of layer N+1*: did the classified `product_line` genuinely determine which retriever ran, did the retrieved context genuinely reach the drafting agent, did the drafting agent's output genuinely determine the MCP tool call made? This is a data-lineage check, not a correctness check — it exists specifically to catch four working components that never actually call each other
+
+| Guardrails checker
+| **New.** Plants a prompt injection inside a retrieved document and confirms it is neutralised before reaching the drafting agent; sends a request containing PII and confirms it never appears in structured logs; adapted directly from Week 5's Section 4.5a lab patterns
+
+| Basic anti-decomposition check
+| Varies the input (different customer, different product combination) across repeated runs and confirms the trace's *shape* genuinely changes, not just the final answer text — an early, lightweight version of the full Tier 3 prober
+|===
+
+=== 6.5 Tier 2 Design Notes
+
+* This tier's cost is low **relative to Domains A/B/C** precisely because it does not re-derive what
+  they already check — it depends on Domain A/B/C's Tier 2 agents already existing and being callable
+  against a new endpoint with minimal adapter work.
+* The Integration tracer depends entirely on the Teenager Framework (Section 2.4) already capturing
+  structured, per-layer input/output — if that observability layer is incomplete anywhere in Domains
+  A/B/C, this is where the gap becomes visible and costly to retrofit.
+
+=== 6.6 Tier 2 Effort Estimate
+
+[cols="3,2", options="header"]
+|===
+| Task | Effort (1 engineer, assumes Domains A/B/C Tier 2 already built)
+
+| Everything in Tier 1
+| ~7–10 days
+
+| Harness wiring — reused Domain A/B/C Tier 2 agents pointed at Nexus
+| 4–6 days
+
+| Integration tracer
+| 5–7 days
+
+| Guardrails checker
+| 4–6 days
+
+| Basic anti-decomposition check
+| 2–3 days
+
+| Calibration
+| 2–3 days
+
+| *Total*
+| *~24–35 engineer-days (roughly 5–7 weeks), contingent on Domains A/B/C already existing*
+|===
+
+=== 6.7 Tier 3 — Full Pipeline with Panel Simulation
+
+[cols="2,3", options="header"]
+|===
+| Agent | Responsibility
+
+| End-to-end narrator agent
+| Reconstructs and narrates the actual observed trace in the same structure as the capstone's required Demo Part 1 (structured intake → grounded retrieval → multi-agent drafting/validation → MCP tool call), and cross-checks that the team's own narration in their submission matches observed reality rather than an idealised description
+
+| Deeper guardrails adversarial prober
+| Directly implements the capstone's required Demo Part 2: a more sophisticated prompt-injection attempt embedded in a retrieved document, and a PII-containing request specifically designed to test whether redaction holds across a multi-turn conversation, not just a single turn
+
+| Rephrasing-bypass prober (Nexus-adapted)
+| Reused from Domain B, retargeted at Nexus's hard-escalation categories — hardship/financial-distress disclosure, safeguarding concerns, compliance-rule overrides — confirming the rule cannot be bypassed by rephrasing, exactly as the capstone brief requires be demonstrated live
+
+| Privilege-escalation prober (Nexus-adapted)
+| Reused from Domain C, retargeted at Nexus's MCP layer across all backend systems (accounts, policies, products, transactions)
+
+| Full anti-decomposition prober
+| Extends the Tier 2 basic check to specifically detect gamed integration — e.g. a hardcoded lookup table designed to make disconnected components merely *appear* wired together — by testing with inputs deliberately outside any pattern the team could have anticipated and hardcoded around
+
+| Escalation / coach agent (shared)
+| Hard-escalates to a human any submission where the guardrails prober or the rephrasing-bypass prober found a single successful bypass, regardless of every other score — the same non-negotiable pattern used in Domains B and C, now applied at the whole-system level
+|===
+
+=== 6.8 Tier 3 Design Notes
+
+* The full anti-decomposition prober is the least standardised agent in the entire evaluator — there is
+  no template capstone to copy this check from, since it is the first agent in the whole system whose
+  job is explicitly to detect gaming of the *evaluation* itself, not gaming of the underlying task.
+  Expect this agent to need the most iteration after seeing real submissions.
+* As in Domains B and C, a single successful guardrail or escalation bypass is a **hard-fail**,
+  regardless of how well every other criterion scores — consistent with the "hard rule, not a tunable
+  threshold" principle used throughout this document.
+
+=== 6.9 Tier 3 Effort Estimate
+
+[cols="3,2", options="header"]
+|===
+| Task | Effort (1–2 engineers, assumes Domains A/B/C Tier 3 already built)
+
+| Everything in Tier 2
+| ~24–35 days
+
+| End-to-end narrator agent
+| 3–4 days
+
+| Deeper guardrails adversarial prober
+| 3–4 days
+
+| Rephrasing-bypass prober (Nexus-adapted)
+| 3–4 days
+
+| Privilege-escalation prober (Nexus-adapted)
+| 3–4 days
+
+| Full anti-decomposition prober
+| 3–5 days
+
+| Coaching report synthesis + escalation orchestration
+| 2–3 days
+
+| Calibration and fairness tuning
+| 3–4 days
+
+| *Total*
+| *~44–63 engineer-days (roughly 9–13 weeks solo; ~5–7 weeks for a pair), contingent on Domains A/B/C already existing at Tier 3*
+|===
+
+CAUTION: Domain D's low *incremental* cost is a direct consequence of Domains A, B, and C already being
+fully built. If Domain D were built as a genuinely standalone system with no reusable agents, its true
+cost would be comparable to, or higher than, any single one of Domains A/B/C, since it still requires
+all the same underlying checks plus the three new integration-specific agents.
+
+---
+
+== Cross-Domain Comparison and Consolidated Effort
+
+=== 7.1 Effort Reuse Across Domains
+
+[cols="2,2,2,2,2", options="header"]
+|===
+| | Domain A (RAG) | Domain B (Agentic AI) | Domain C (MCP) | Domain D (Nexus)
+
+| Tier 1 total
+| ~8–11 days
+| ~6–9 days
+| ~7–10 days
+| ~7–10 days *(needs A/B/C static analyzers to exist)*
+
+| Tier 2 total (cumulative)
+| ~24–35 days
+| ~18–26 days
+| ~26–38 days
+| ~24–35 days *(needs A/B/C Tier 2 to exist)*
+
+| Tier 3 total (cumulative)
+| ~44–64 days
+| ~30–42 days
+| ~40–58 days
+| ~44–63 days *(needs A/B/C Tier 3 to exist)*
+|===
+
+[cols="3,2", options="header"]
+|===
+| Consolidated build (all four domains, one shared system) | Effort
+
+| Shared infrastructure (Domain router, common data model, observability layer, scorer/aggregator)
+| 6–9 days
+
+| *Phase 1 — Tier 1 across Domains A, B, C*
+| *~27–39 engineer-days (~6–8 weeks solo; ~3–4 weeks pair)*
+
+| *Phase 2 — add Tier 2 across Domains A, B, C (cumulative)*
+| *~74–108 engineer-days (~15–22 weeks solo; ~8–11 weeks pair)*
+
+| *Phase 3 — add Tier 3 across Domains A, B, C (cumulative)*
+| *~120–173 engineer-days (~24–35 weeks solo; ~12–18 weeks pair)*
+
+| *Phase 4 — add Domain D (Tiers 1–3), on top of a completed Phase 3*
+| *+44–63 engineer-days*
+
+| *Total — all four domains, full Tier 3 depth*
+| *~164–236 engineer-days (roughly 33–47 weeks solo; ~17–24 weeks for a pair)*
+|===
+
+Phase 4 is deliberately sequenced last: it both depends on Domains A, B, and C already existing, and it
+naturally follows the programme's own week ordering — Nexus is the Week 6 capstone, built after learners
+(and, in parallel, the evaluator) have already been through Weeks 3, 4, and 5.
+
+A programme that only needs Tier 1 triage across all four domains, skipping live execution entirely,
+costs **~34–49 engineer-days** (Phase 1 plus Domain D's Tier 1 alone) — though note Domain D's Tier 1
+still assumes Domain A/B/C's Tier 1 static analyzers exist to be reused against Nexus's sub-modules.
+
+=== 7.2 Recommendation
+
+* Build the **shared infrastructure once**, then add domains in programme order: A (Week 3) → B (Week 4)
+  → C (Week 5) → D (Week 6) — the evaluator becomes ready for each week's capstone exactly when your
+  cohort needs it, and Domain D's low incremental cost is only realised if A, B, and C already exist.
+* Within Domains A, B, and C, **Tier 1 first, always** — cheapest tier, useful triage on its own.
+* Domain D cannot be usefully built before Domains A, B, and C reach at least Tier 2 — its core value
+  (the Integration tracer) has nothing to compose over otherwise. Do not attempt to shortcut this
+  ordering to save time; it will not actually save time, since the reused agents are exactly where
+  Domain D's cost savings come from.
+* Treat Domain B's rephrasing-bypass prober, Domain C's privilege-escalation prober, and Domain D's
+  Integration tracer as the three highest-value Tier 2/3 additions across the whole system — each
+  directly implements a hard, explicitly stated evaluation requirement from its capstone's own brief.
+
+---
+
+== Appendix A — Rubric-to-Agent Traceability Matrix (All Domains)
+
+[cols="1,3,3,1", options="header"]
+|===
+| Domain | Rubric criterion | Verifying agent(s) | Earliest tier
+
+| A
+| Working system (25%)
+| Sandbox runner, Query tester
+| Tier 2
+
+| A
+| Chunking and ingestion quality (15%)
+| Code static analyzer (structure); Retrieval and citation checker (observed quality)
+| Tier 1 (partial) / Tier 2 (full)
+
+| A
+| Retrieval design (20%)
+| Code static analyzer; Query tester, Comparative-query specialist
+| Tier 1 (partial) / Tier 2 (full)
+
+| A
+| RAGAS evaluation (20%)
+| Code static analyzer (harness presence); RAGAS executor (independent scoring)
+| Tier 1 (partial) / Tier 2 (full)
+
+| A
+| Evaluation report depth and honesty (10%)
+| Report reviewer
+| Tier 1
+
+| A
+| Demo and panel Q&A (10%)
+| Adversarial prober, Panel simulator
+| Tier 3 (proxy only)
+
+| B
+| Multi-agent architecture (20%)
+| Agent-role static analyzer, Trace verifier
+| Tier 1 (partial) / Tier 2 (full)
+
+| B
+| Classification and retrieval accuracy (15%)
+| Scenario tester, Trace verifier
+| Tier 2
+
+| B
+| Draft quality and validation (15%)
+| Scenario tester, Case-closure/output checker
+| Tier 2
+
+| B
+| Escalation logic correctness (25%)
+| Escalation-logic static analyzer (Tier 1), Escalation verifier (Tier 2), Rephrasing-bypass prober (Tier 3)
+| Tier 1 (partial) / Tier 3 (full confidence)
+
+| B
+| Architecture document (15%)
+| Architecture document reviewer
+| Tier 1
+
+| B
+| Demo and debrief (10%)
+| Panel-simulation agents
+| Tier 3 (proxy only)
+
+| C
+| MCP server implementation (25%)
+| MCP primitive checker (Tier 1), Discovery and tool-call tester (Tier 2)
+| Tier 1 (partial) / Tier 2 (full)
+
+| C
+| Security and scoped access (20%)
+| Security static analyzer (Tier 1), Scoped-access verifier (Tier 2), Privilege-escalation prober (Tier 3)
+| Tier 1 (partial) / Tier 3 (full confidence)
+
+| C
+| Data minimisation (15%)
+| Scoped-access verifier
+| Tier 2
+
+| C
+| Compliance check demonstrated (10%)
+| Compliance-check verifier
+| Tier 2
+
+| C
+| Multi-server composition (15%)
+| Multi-server composition tester
+| Tier 3
+
+| C
+| Architecture document, deployment evidence, and demo (15%)
+| Deployment artifact checker (Tier 1), Health-check and log auditor (Tier 2), Deployment resilience prober (Tier 3)
+| Tier 1 (partial) / Tier 3 (full)
+
+| D
+| End-to-end integration (25%)
+| Integration tracer (new), Full anti-decomposition prober (Tier 3)
+| Tier 2 (partial) / Tier 3 (full confidence)
+
+| D
+| Structured intake quality (10%)
+| Reused Domain A/B intake-validation agents
+| Tier 2
+
+| D
+| Grounded, reconciled retrieval (15%)
+| Reused Domain A retrieval/citation checker
+| Tier 2
+
+| D
+| Multi-agent orchestration and escalation (15%)
+| Reused Domain B trace verifier; Rephrasing-bypass prober (Nexus-adapted)
+| Tier 2 (partial) / Tier 3 (full confidence)
+
+| D
+| MCP-based tool access (15%)
+| Reused Domain C discovery/tool-call tester and scoped-access verifier; Privilege-escalation prober (Nexus-adapted)
+| Tier 2 (partial) / Tier 3 (full confidence)
+
+| D
+| Guardrails stack (10%)
+| Guardrails module presence checker (Tier 1), Guardrails checker (Tier 2), Deeper guardrails adversarial prober (Tier 3)
+| Tier 1 (partial) / Tier 3 (full confidence)
+
+| D
+| Deployment evidence (5%)
+| Reused Domain C deployment artifact checker and health-check auditor
+| Tier 2
+
+| D
+| Demo and debrief (5%)
+| End-to-end narrator agent
+| Tier 3 (proxy only)
+|===
+
+== Appendix B — Assumptions Behind the Effort Estimates
+
+* Estimates assume one engineer already fluent in Python, prompt engineering, and basic Docker.
+* Estimates assume access to the Anthropic or OpenAI API and standard RAG/agent libraries (LangChain,
+  FAISS or Chroma, RAGAS, AutoGen or CrewAI, FastMCP) with no procurement delay.
+* Calibration effort assumes 5–10 representative submissions (real or synthetic) are available per
+  domain before the evaluator is trusted for live grading.
+* Domain B and C effort estimates assume the facilitator team, not the evaluator-building engineer,
+  authors or reviews safety-sensitive test scenarios (CareRoute's always-escalate cases; BankForge's
+  compliance-check scenarios).
+* **Domain D's effort estimates are contingent, not standalone** — every table in Section 6 explicitly
+  assumes Domains A, B, and C already exist at the corresponding tier. Building Domain D first, or in
+  isolation, would not realise these numbers (Section 6.9, caution note).
+* Consolidated effort in Section 7.1 assumes the four domains are built by the same engineer(s) in
+  sequence, so shared-infrastructure and reuse learnings carry forward.
+* Effort figures are engineering build time only; they exclude facilitator time spent reviewing
+  escalated or LOW-confidence findings, which recurs every cohort.
+
+== Appendix C — Why Domain B/C Rubrics Are Marked as Proposals, and Domain D Is Not
+
+CatalogueIQ and Nexus ship with explicit, facilitator-approved percentage weightings in their source
+specifications. SupportPilot, CareRoute, and BankForge instead describe evaluation *focus* qualitatively.
+Sections 4.1 and 5.1 convert those qualitative statements into weighted rubrics by giving each capstone's
+own stated "specific design challenge" the highest weight, distributing the remainder across explicitly
+listed deliverables, and keeping the overall shape consistent with CatalogueIQ's and Nexus's published
+rubrics. Facilitators should treat Sections 4.1 and 5.1 as a **first draft for sign-off**.
+
+Domain D required no such proposal: Nexus's capstone brief already publishes the exact 8-criterion,
+percentage-weighted rubric reproduced in Section 6.1, so the evaluator was built to target it directly.
+
+---
+
+*End of Design Document — Multi-Domain Agentic Evaluator (Final Edition, v4.0)*
