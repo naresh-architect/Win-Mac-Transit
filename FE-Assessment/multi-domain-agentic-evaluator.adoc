@@ -3,8 +3,8 @@
 :doctype: book
 :icons: font
 :revdate: {docdate}
-:revnumber: 4.0
-:revremark: Final edition — adds Domain D (Nexus, Week 6 integrative capstone) as a composition layer over Domains A, B, and C
+:revnumber: 5.0
+:revremark: Adds scoring thresholds, per-domain failure signatures, and a validated-AI-tool-use competency, adapted from a comparison with Tekstac's AI-Role Capability Assessment
 :sectnumlevels: 5
 :sectnums: 5
 :source-highlighter: highlight.js
@@ -58,6 +58,15 @@ in their source specifications — only qualitative deliverables and evaluation 
 5.1 propose a weighted rubric for each, derived directly from those stated requirements. **Nexus is
 different: it already ships with an official, facilitator-published 8-criterion weighted rubric**
 (Section 6.1), so no proposal step is needed for Domain D.
+
+NOTE: *What's new in this edition:* three additions, adapted from a side-by-side comparison with
+Tekstac's AI-Role Capability Assessment (a human-candidate evaluation framework that turned out to
+share this document's core design philosophy almost exactly). Each is added to the shared architecture
+(Section 2) and then instantiated per domain: **(1)** explicit four-band scoring thresholds, so a
+numeric score has an agreed meaning; **(2)** a named "reaching" failure signature per domain, giving
+facilitators a recognisable pattern to calibrate against, distinct from the hard-escalation rules already
+in this document; **(3)** an optional, separately weighted "validated AI tool use" competency, for
+programmes where learners themselves use AI coding tools to build their capstones.
 
 ---
 
@@ -149,6 +158,107 @@ what came out, tokens spent, and latency. This is required infrastructure for Do
 the Integration tracer (Section 6.3) cannot function without a complete, structured trace of every
 layer's input and output already being captured.
 
+=== 2.5 Scoring Thresholds — Shared Four-Band Model
+
+Every domain's rubric produces a single weighted percentage score. Without an agreed interpretation of
+that number, "72%" means whatever each facilitator privately decides it means. This document adopts one
+shared four-band model, applied consistently across all four domains, adapted from the same banding
+Tekstac's AI-Role Capability Assessment uses for its own candidate scoring:
+
+[cols="2,1,3", options="header"]
+|===
+| Band | Score | Interpretation
+
+| Below Threshold
+| <50%
+| Significant gaps against the rubric; the submission is not ready and needs substantial rework, not minor fixes, before resubmission
+
+| Developing
+| 50–64%
+| Partial competency demonstrated; targeted rework recommended on the specific flagged criteria before the submission is accepted
+
+| Pass
+| 65–79%
+| Meets the published expectations for this capstone; ready to proceed to demo and certification
+
+| Distinction
+| 80–100%
+| Exceeds expectations; strong enough to serve as a reference example for future cohorts and facilitators
+|===
+
+NOTE: These cut points are a starting default, not a fixed law — Tekstac's own document states its
+thresholds are "tunable per engagement," and the same applies here. What matters more than the exact
+numbers is that every domain uses the *same* four bands with the *same* names, so a "Pass" on the RAG
+track and a "Pass" on the MCP track carry comparable meaning even though the underlying rubrics differ.
+
+CAUTION: A band is a *starting point for a conversation*, not an automatic decision. A submission at 63%
+with one LOW-confidence finding driving most of the gap should be reviewed differently from one at 63%
+with several genuinely weak criteria — the confidence tagging from Section 2.3 exists precisely so this
+distinction isn't lost inside a single number.
+
+=== 2.6 Failure Signatures — "Reaching" Calibration Notes
+
+A hard-escalation rule (Section 2.3) catches one specific dealbreaker: a single bypass, a single
+unauthorised access, and the submission is routed to a human regardless of every other score. That is
+necessary but not sufficient — plenty of submissions are weaker than they look without ever tripping a
+single hard rule.
+
+For this, each domain also carries a **named failure signature**: a short, recognisable description of
+what a submission looks like when it is *not quite ready for that domain's bar, but superficially
+resembles one that is* — plausible on the surface, missing the substance underneath. This is a direct
+adaptation of the "reaching up" calibration notes in Tekstac's assessment, which serve the same purpose
+for human graders assessing candidates one tier above their actual level.
+
+The value of a named signature is consistency: a facilitator who has read a domain's signature once will
+recognise the same pattern across many submissions, rather than each facilitator forming their own
+private, inconsistent sense of "not quite there." Each domain's specific signature is given in its own
+section (3.11, 4.9, 5.9, 6.10) rather than here, since the pattern is different for every domain — a RAG
+submission and an MCP submission fail to be "ready" in unrelated ways.
+
+NOTE: A failure signature is descriptive, not a scoring rule. It does not itself dock points; it exists
+to help a human interpret a borderline score (Section 2.5) quickly and consistently, in the same way
+Tekstac's calibration notes are described as "calibration anchors when norming across evaluators," not as
+line items on the rubric.
+
+=== 2.7 AI Tool Usage — An Optional, Separately Weighted Competency
+
+Where learners build their capstones using approved AI coding tools (for example, Claude Code or GitHub
+Copilot), this document adds one further, optional competency, adapted directly from Tekstac's own AI
+tool usage policy:
+
+* A learner who does not use the available AI tools loses marks **only** on this one criterion — every
+  other competency is scored purely on deliverable quality, exactly as in Tekstac's model.
+* A learner who uses AI tools and **validates** the output (iterates, tests, catches what the tool got
+  wrong) scores well on this criterion.
+* A learner who uses AI tools and **bulk-accepts** output without evident validation scores *lower* on
+  this criterion than a learner who did not use AI tools at all — unvalidated AI use is treated as a
+  worse signal than no AI use, not a neutral one.
+
+[cols="2,3", options="header"]
+|===
+| Agent | Responsibility
+
+| AI tool usage auditor
+| A new shared agent (alongside the Domain router). Inspects whatever usage evidence is available — git commit granularity and messages, an IDE session log, or a learner-submitted usage log — for signs of iterative refinement versus large, unmodified blocks of AI-generated code accepted in a single pass. Produces a confidence-tagged finding, exactly like every other check in this document, rather than a bare score
+|===
+
+CAUTION: **This criterion has a real prerequisite Tekstac's environment satisfies and this document's
+base programme does not yet describe: a mechanism for capturing AI-tool-usage evidence in the first
+place.** Tekstac's assessment VM traces tool usage at the platform level. Nothing in the base capstone
+programme (Weeks 2–6) currently instruments an equivalent capture mechanism. Before this competency can
+be scored with any real confidence, facilitators need to choose and put in place one of: platform-level
+usage tracing (if the learner environment supports it), a required learner-submitted usage log, or
+commit-history analysis as a lower-fidelity proxy. Absent any of these, the AI tool usage auditor should
+report **N/A**, not a guessed zero — a missing measurement is a different finding from a bad one, and
+the confidence-tagging discipline in Section 2.3 exists precisely to keep that distinction visible.
+
+Because this is a *new* competency rather than a restatement of an existing one, adding it to a domain's
+rubric changes how that rubric's weights sum to 100%. Sections 4.1 and 5.1 (Domain B and C, already
+marked as proposed rubrics — Appendix C) show it folded directly in, with the remaining criteria
+rescaled proportionally. Sections 3.1 and 6.1 (Domain A and D, officially published rubrics) instead
+report it as a **supplementary score alongside** the published weighting, since altering an officially
+published rubric's percentages is a facilitator decision, not an engineering one.
+
 ---
 
 == Domain A — RAG Capstones (CatalogueIQ)
@@ -199,6 +309,11 @@ and Demo and panel Q&A (10%).
 | None
 | Medium — automated proxy, not a substitute for human judgement (Section 3.9)
 |===
+
+NOTE: *Supplementary, not folded in:* if learners use AI coding tools to build CatalogueIQ, the AI tool
+usage auditor (Section 2.7) reports a separate 0–100 score alongside this published six-criterion rubric
+— it is not blended into the six weights above, since those percentages are officially published and
+not this document's to alter unilaterally.
 
 === 3.2 Tier 1 — Static Evaluator (Report + Code Review Only)
 
@@ -383,6 +498,20 @@ a rehearsal report and facilitator prep brief — **not the system of record for
 | *~44–64 engineer-days (roughly 9–13 weeks solo; ~5–7 weeks for a pair)*
 |===
 
+=== 3.11 Scoring Thresholds and Failure Signature
+
+Scores against the six-criterion rubric (Section 3.1) are interpreted using the shared four-band model
+in Section 2.5 (Below Threshold / Developing / Pass / Distinction).
+
+CAUTION: *"RAG reaching" failure signature:* answers single-fact questions correctly, but always
+retrieves only the top-scoring chunk even for comparative queries ("best earbuds under ₹2000" returns
+one product, not several to compare). The evaluation report describes RAGAS scores in confident detail,
+but the code never actually calls the RAGAS library — the harness exists but is never invoked. Chunking
+looks reasonable for prose but treats every CSV row as one undifferentiated blob. The demo convincingly
+handles the happy path but has never been tested against a product that isn't in the catalogue. None of
+these alone fails the rubric outright — together, they are the pattern of a submission that looks
+farther along than it is.
+
 ---
 
 == Domain B — Agentic AI / Multi-Agent Capstones (SupportPilot, CareRoute)
@@ -394,29 +523,39 @@ a rehearsal report and facilitator prep brief — **not the system of record for
 | Criterion | Weight | What it checks
 
 | Multi-agent architecture — distinct roles, clean hand-offs
-| 20%
+| 18%
 | Are classify/retrieve/draft/validate/escalate genuinely separate components?
 
 | Classification and retrieval accuracy
-| 15%
+| 14%
 | Correct typing/prioritisation, correct knowledge/DB record retrieval
 
 | Draft quality and validation
-| 15%
+| 13%
 | Accurate, on-tone, compliant draft; validator agent genuinely catches bad drafts
 
 | Escalation logic correctness
-| 25%
+| 22%
 | SupportPilot: confidence-threshold fires correctly. CareRoute: hard, category-based rule enforced in code, provably non-bypassable
 
 | Architecture document
-| 15%
+| 13%
 | Clearly explains roles, hand-offs, escalation design
 
 | Demo and debrief
 | 10%
 | Team can trace one request through every agent role live
+
+| AI tool usage & validation *(optional — Section 2.7)*
+| 10%
+| If learners used AI coding tools to build this: purposeful, validated use scores well; bulk-accepted, unvalidated use scores below not using AI tools at all; not using AI tools scores 0 on this row only
 |===
+
+NOTE: Weights above are rescaled from the original six-criterion proposal (Section 4.1, v4.0) to make
+room for the new AI tool usage row, keeping the relative emphasis on escalation logic as the highest
+weight unchanged — this rubric was already marked "proposed, pending facilitator sign-off" (Appendix C),
+so folding the new criterion directly in, rather than reporting it as supplementary, is consistent with
+that existing status.
 
 === 4.2 Tier 1 — Static Evaluator
 
@@ -565,6 +704,20 @@ clinical/safeguarding background, clearly labelled as synthetic fixtures.
 | *~30–42 engineer-days (roughly 6–8 weeks solo; ~4–5 weeks for a pair)*
 |===
 
+=== 4.9 Scoring Thresholds and Failure Signature
+
+Scores against the seven-criterion rubric (Section 4.1) are interpreted using the shared four-band model
+in Section 2.5 (Below Threshold / Developing / Pass / Distinction).
+
+CAUTION: *"Multi-agent reaching" failure signature:* produces a working classify → draft → respond flow,
+but the "agents" are really sequential prompt calls inside one function with no genuine hand-off contract
+between them. Escalation exists only as a phrase in the system prompt ("please escalate urgent cases")
+rather than a hard-coded check the model cannot talk its way around. Confidently resolves routine tickets
+in the demo but has never been tested against a rephrased or minimised description of an urgent case.
+The architecture document describes agent roles that don't actually correspond to separate code paths.
+As with every domain's signature, no single item here fails the rubric outright — the combination is
+the tell.
+
 ---
 
 == Domain C — MCP Capstones (BankForge)
@@ -576,29 +729,37 @@ clinical/safeguarding background, clearly labelled as synthetic fixtures.
 | Criterion | Weight | What it checks
 
 | MCP server implementation — Tools, Resources, Prompts
-| 25%
+| 23%
 | All three MCP primitives genuinely exposed across three required servers
 
 | Security and scoped access control
-| 20%
+| 18%
 | Access genuinely scoped per request, strong auth, service isolation
 
 | Data minimisation
-| 15%
+| 13%
 | Servers return only needed fields, not over-fetched data
 
 | Compliance check demonstrated
-| 10%
+| 9%
 | At least one real compliance rule enforced and demonstrable
 
 | Multi-server composition / end-to-end task completion
-| 15%
+| 14%
 | Real multi-step task completed via all three servers, no hardcoded glue bypassing MCP
 
 | Architecture document, deployment evidence, and demo
-| 15%
+| 13%
 | Containerised deployment demonstrated, end-to-end trace narrated
+
+| AI tool usage & validation *(optional — Section 2.7)*
+| 10%
+| If learners used AI coding tools to build this: purposeful, validated use scores well; bulk-accepted, unvalidated use scores below not using AI tools at all; not using AI tools scores 0 on this row only
 |===
+
+NOTE: Weights rescaled from the original six-criterion proposal (Section 5.1, v4.0) to make room for the
+AI tool usage row, keeping MCP server implementation as the highest-weighted criterion unchanged — this
+rubric was already marked "proposed, pending facilitator sign-off" (Appendix C).
 
 === 5.2 Tier 1 — Static Evaluator
 
@@ -749,6 +910,20 @@ of the capstone's "security and compliance as first-class requirements" mandate.
 | *~40–58 engineer-days (roughly 8–12 weeks solo; ~5–7 weeks for a pair)*
 |===
 
+=== 5.9 Scoring Thresholds and Failure Signature
+
+Scores against the seven-criterion rubric (Section 5.1) are interpreted using the shared four-band model
+in Section 2.5 (Below Threshold / Developing / Pass / Distinction).
+
+CAUTION: *"MCP reaching" failure signature:* all three MCP servers run and respond correctly to
+well-formed requests, but every tool returns the full customer record regardless of the caller's
+declared scope — access control exists only as a comment or a TODO, not an enforced check. Compliance is
+described in the architecture document but never actually enforced in code. Multi-server composition
+works for the one rehearsed happy-path demo script, but breaks the moment a request touches the three
+servers in an order the team didn't specifically practise. As with every domain's signature, the
+individual gaps might each look minor in isolation — together they describe a system that looks secure
+and integrated without actually being either.
+
 ---
 
 == Domain D — Integrative Capstone (Nexus)
@@ -794,6 +969,11 @@ evaluator targets this rubric directly.
 | 5%
 | Team clearly narrates the end-to-end trace and design trade-offs
 |===
+
+NOTE: *Supplementary, not folded in:* if learners use AI coding tools to build Nexus, the AI tool usage
+auditor (Section 2.7) reports a separate 0–100 score alongside this published eight-criterion rubric —
+it is not blended into the eight weights above, for the same reason as Domain A (Section 3.1): this
+rubric is officially published and not this document's to alter unilaterally.
 
 === 6.2 Design Principle — Composition, Not Reimplementation
 
@@ -984,6 +1164,20 @@ CAUTION: Domain D's low *incremental* cost is a direct consequence of Domains A,
 fully built. If Domain D were built as a genuinely standalone system with no reusable agents, its true
 cost would be comparable to, or higher than, any single one of Domains A/B/C, since it still requires
 all the same underlying checks plus the three new integration-specific agents.
+
+=== 6.10 Scoring Thresholds and Failure Signature
+
+Scores against the eight-criterion official rubric (Section 6.1) are interpreted using the shared
+four-band model in Section 2.5 (Below Threshold / Developing / Pass / Distinction).
+
+CAUTION: *"Nexus reaching" failure signature:* each of the four layers — intake, retrieval, agents, MCP
+— works in isolation and has its own passing demo, but the real end-to-end request never actually
+threads through all of them: at least one layer's output is hardcoded, ignored, or bypassed downstream.
+Guardrails modules exist in the repository but aren't wired into the live request path — they'd pass a
+code-presence check while doing nothing at runtime. The team can narrate what each component does in
+isolation, but not what happens to one real request as it moves through the whole system. This is
+precisely the failure mode Nexus's own capstone brief warns evaluators to trace for directly (Section
+6.2) — four excellent, disconnected components rather than one integrated system.
 
 ---
 
@@ -1228,6 +1422,12 @@ rubrics. Facilitators should treat Sections 4.1 and 5.1 as a **first draft for s
 Domain D required no such proposal: Nexus's capstone brief already publishes the exact 8-criterion,
 percentage-weighted rubric reproduced in Section 6.1, so the evaluator was built to target it directly.
 
+NOTE: The same distinction governs how the new AI tool usage competency (Section 2.7) was added in this
+edition: folded directly into Domain B and C's already-proposed rubrics (Sections 4.1, 5.1), but reported
+only as a supplementary score alongside Domain A and D's officially published rubrics (Sections 3.1,
+6.1) — this document changes what it proposed itself, and only recommends, rather than assumes, changes
+to what facilitators have already published.
+
 ---
 
-*End of Design Document — Multi-Domain Agentic Evaluator (Final Edition, v4.0)*
+*End of Design Document — Multi-Domain Agentic Evaluator (v5.0)*

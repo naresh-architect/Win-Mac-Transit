@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Two AI Evaluation Frameworks — Comparison</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
+<style>
+  :root{
+    --bg:#F5F6F8; --card:#FFFFFF; --ink:#16213A; --body:#3A3F4B; --muted:#6B7280; --line:#E1E4E9;
+    --teal:#2A6F6F; --amber:#B98900; --purple:#6B5B95; --green:#4C7A3F; --berry:#A83E5D; --slate:#5B6B7A; --blue:#3D6EA8;
+    --serif: Georgia, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+    --sans: -apple-system, "Segoe UI", system-ui, Roboto, Helvetica, Arial, sans-serif;
+    --mono: "SF Mono", ui-monospace, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  *{box-sizing:border-box;}
+  body{ margin:0; background:var(--bg); color:var(--body); font-family:var(--sans); line-height:1.55; font-size:16px; }
+  :focus-visible{ outline:2px solid var(--teal); outline-offset:3px; }
+  .wrap{ max-width:1100px; margin:0 auto; padding:0 24px; }
+
+  header.top{ background:var(--ink); color:#EDEFF3; padding:52px 0 36px; border-bottom:5px solid var(--purple); }
+  header.top .eyebrow{ font-family:var(--mono); text-transform:uppercase; letter-spacing:.14em; font-size:12.5px; color:#B9AEDC; margin-bottom:14px; }
+  header.top h1{ font-family:var(--serif); font-weight:700; font-size:clamp(26px,3.6vw,38px); margin:0 0 10px; letter-spacing:-0.01em; max-width:26ch; }
+  header.top p.sub{ max-width:70ch; color:#C4CBD6; font-size:16.5px; margin:0; }
+
+  section{ padding:46px 0; border-bottom:1px solid var(--line); }
+  section:last-of-type{ border-bottom:none; }
+  h2{ font-family:var(--serif); font-size:24px; color:var(--ink); margin:0 0 6px; letter-spacing:-0.01em; }
+  h2 .num{ font-family:var(--mono); color:var(--purple); font-size:14px; font-weight:600; margin-right:10px; }
+  .section-intro{ color:var(--muted); max-width:74ch; margin:0 0 26px; font-size:15.5px; }
+
+  .doc-cards{ display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+  .doc-card{ background:var(--card); border:1px solid var(--line); border-radius:8px; padding:22px 22px; border-top:4px solid var(--teal); }
+  .doc-card.right{ border-top-color:var(--berry); }
+  .doc-card .kicker{ font-family:var(--mono); font-size:11.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
+  .doc-card h3{ font-family:var(--serif); font-size:19px; margin:6px 0 10px; color:var(--ink); }
+  .doc-card p{ font-size:14px; margin:0 0 12px; }
+  .doc-card ul{ margin:0; padding-left:18px; font-size:13.5px; }
+  .doc-card li{ margin-bottom:5px; }
+
+  .stat-strip{ display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-top:22px; }
+  .stat-mini{ background:var(--card); border:1px solid var(--line); border-radius:6px; padding:14px 16px; }
+  .stat-mini .k{ font-family:var(--mono); font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+  .stat-mini .a, .stat-mini .b{ font-size:13.5px; margin-top:4px; }
+  .stat-mini .a{ color:var(--teal); font-weight:700; }
+  .stat-mini .b{ color:var(--berry); font-weight:700; }
+  .stat-mini .vs{ font-size:11px; color:var(--muted); margin:2px 0; }
+
+  table{ width:100%; border-collapse:collapse; font-size:14.2px; background:var(--card); }
+  th, td{ text-align:left; padding:11px 14px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th{ font-family:var(--mono); font-size:11.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); font-weight:600; background:#FAFBFC; }
+  tr:last-child td{ border-bottom:none; }
+  .table-wrap{ border:1px solid var(--line); border-radius:6px; overflow:hidden; }
+  td.a-col{ border-left:3px solid var(--teal); }
+  td.b-col{ border-left:3px solid var(--berry); }
+
+  .chart-card{ background:var(--card); border:1px solid var(--line); border-radius:6px; padding:22px 20px 12px; margin:18px 0; }
+  .chart-card h4{ font-size:15px; margin:0 0 3px; color:var(--ink); }
+  .chart-card .chart-note{ font-size:12.5px; color:var(--muted); margin:0 0 14px; }
+  .chart-box{ position:relative; height:300px; }
+  .chart-grid-2{ display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+
+  .callout{ border-left:4px solid var(--purple); background:#F1EFF6; padding:16px 20px; border-radius:0 6px 6px 0; font-size:14.2px; margin-top:14px; }
+  .callout.gap{ border-left-color:var(--amber); background:#FBF4E4; }
+
+  .principle-grid{ display:grid; grid-template-columns:repeat(2,1fr); gap:16px; }
+  .principle-card{ background:var(--card); border:1px solid var(--line); border-radius:6px; padding:18px 20px; }
+  .principle-card .ptag{ font-family:var(--mono); font-size:11px; color:#fff; background:var(--purple); display:inline-block; padding:2px 8px; border-radius:10px; margin-bottom:10px; }
+  .principle-card h4{ margin:0 0 8px; font-size:15px; color:var(--ink); }
+  .principle-card p{ margin:0; font-size:13.8px; }
+  .principle-card .mapping{ margin-top:10px; font-size:12.5px; color:var(--muted); border-top:1px dashed var(--line); padding-top:8px; }
+  .principle-card .mapping strong{ color:var(--ink); }
+
+  .thresh-bar{ display:flex; width:100%; height:44px; border-radius:5px; overflow:hidden; margin-top:6px; }
+  .thresh-bar div{ display:flex; align-items:center; justify-content:center; color:#fff; font-family:var(--mono); font-size:12px; font-weight:700; }
+  .thresh-bar .b1{ background:#8A2E2E; flex:0 0 50%; }
+  .thresh-bar .b2{ background:var(--amber); flex:0 0 15%; }
+  .thresh-bar .b3{ background:var(--teal); flex:0 0 15%; }
+  .thresh-bar .b4{ background:var(--green); flex:0 0 20%; }
+  .thresh-cap{ display:flex; margin-top:6px; font-size:11.5px; color:var(--muted); }
+  .thresh-cap div{ }
+  .thresh-cap .c1{ flex:0 0 50%; } .thresh-cap .c2{ flex:0 0 15%; } .thresh-cap .c3{ flex:0 0 15%; } .thresh-cap .c4{ flex:0 0 20%; }
+
+  footer{ padding:32px 0 56px; text-align:center; color:var(--muted); font-size:13px; }
+
+  @media (max-width:760px){
+    .doc-cards, .stat-strip, .chart-grid-2, .principle-grid{ grid-template-columns:1fr; }
+    .thresh-bar, .thresh-cap{ flex-direction:column; height:auto; }
+    .thresh-bar div{ padding:8px; flex:none !important; }
+    .thresh-cap div{ flex:none !important; margin-bottom:4px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <div class="eyebrow">Comparison Brief · Updated after v5.0</div>
+    <h1>Two AI evaluation frameworks, one shared philosophy</h1>
+    <p class="sub">Tekstac's AI-Role Capability Assessment grades <em>human candidates</em> building on a
+    shared fictional system. Our Multi-Domain Agentic Evaluator grades <em>AI-built capstone
+    submissions</em> using AI agents. Different evaluees, strikingly similar design principles.</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+<section id="overview">
+  <h2><span class="num">01</span>What we're comparing</h2>
+  <div class="doc-cards">
+    <div class="doc-card">
+      <div class="kicker">Document A</div>
+      <h3>Tekstac AI-Role Capability Assessment</h3>
+      <p>A 3-hour hands-on case study that grades job candidates at three career altitudes, all working
+      on one shared fictional system (Astra, an IT support assistant), with planted bugs and traps a
+      strong performer should catch.</p>
+      <ul>
+        <li>3 altitudes: Builder → Workflow Engineer → Delivery Strategist</li>
+        <li>7 shared competencies, reweighted per altitude</li>
+        <li>Graded by human evaluators against a rubric</li>
+        <li>Planted issues (P1–P9 per tier) as the discriminator</li>
+      </ul>
+    </div>
+    <div class="doc-card right">
+      <div class="kicker">Document B</div>
+      <h3>Multi-Domain Agentic Evaluator</h3>
+      <p>A design for an AI agent system that grades capstone software submissions across four
+      technology tracks, at three increasing levels of automated rigour, culminating in an integration
+      test across all of them.</p>
+      <ul>
+        <li>3 rigour levels: Static review → Live execution → Adversarial stress-test</li>
+        <li>4 domains, each with its own weighted rubric</li>
+        <li>Graded by AI evaluator agents, human escalation on uncertainty</li>
+        <li>Adversarial probes (rephrasing-bypass, privilege-escalation, anti-decomposition) as the discriminator</li>
+        <li><em>v5.0:</em> four-band scoring thresholds + a named failure signature per domain</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="stat-strip">
+    <div class="stat-mini"><div class="k">Who is evaluated</div><div class="a">Human candidates</div><div class="vs">vs</div><div class="b">AI-built software submissions</div></div>
+    <div class="stat-mini"><div class="k">Who grades</div><div class="a">Human evaluators</div><div class="vs">vs</div><div class="b">AI evaluator agents</div></div>
+    <div class="stat-mini"><div class="k">Timeframe</div><div class="a">3-hour session</div><div class="vs">vs</div><div class="b">Continuous, per submission</div></div>
+    <div class="stat-mini"><div class="k">Discriminator</div><div class="a">Planted bugs/traps</div><div class="vs">vs</div><div class="b">Adversarial probing agents</div></div>
+  </div>
+</section>
+
+<section id="mapping">
+  <h2><span class="num">02</span>Structural mapping</h2>
+  <p class="section-intro">Despite grading completely different things, both documents solve the same
+  design problem — how do you fairly assess something across a range of skill/maturity levels — the
+  same way.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Dimension</th><th class="a-col">Tekstac (concrete example)</th><th class="b-col">Our evaluator (concrete example)</th><th>Why they're really the same idea</th></tr></thead>
+<tbody>
+<tr><td>Shared spine</td><td class="a-col">Every tier — Builder, Workflow Engineer, Strategist — works on the same fictional system, Astra. A Builder fixes one module; a Strategist redesigns how Astra scales across 12 clients. Same object, different lens.</td><td class="b-col">Every domain shares the same Domain Router, JSON data schema, and observability layer (Section 2). A RAG submission and an MCP submission get intake-processed identically before any domain-specific check runs.</td><td>Neither framework rebuilds its foundation per level — they reuse one spine so effort isn't duplicated and results stay comparable.</td></tr>
+<tr><td>Escalating scope</td><td class="a-col">Tier 1 fixes a module. Tier 2 redesigns the whole pipeline. Tier 3 governs the system across an entire client portfolio. Scope of responsibility widens.</td><td class="b-col">Level 1 just reads code. Level 2 runs the system. Level 3 tries to break it. Depth of scrutiny deepens.</td><td>Both use three steps, but the axis is different — Tekstac scales what you're responsible for, ours scales how hard we look. Worth knowing this isn't a perfect 1:1 mapping.</td></tr>
+<tr><td>Rubric structure</td><td class="a-col">All three tiers are graded on the exact same 7 named competencies (Intent &amp; Prompt Design, Agentic Workflow Design, etc.) — only the weight of each changes.</td><td class="b-col">Domain A's six criteria (Working system, Chunking, etc.) are completely different criteria from Domain C's six (MCP implementation, Security, etc.) — nothing is shared.</td><td>This is a genuine structural difference, not just phrasing — Tekstac reweights a fixed list; we swap the list entirely per domain.</td></tr>
+<tr><td>Built-in traps</td><td class="a-col">P1–P9 are literal known bugs planted in the starter code/brief — e.g. a hardcoded API key sits in source, invisible to the candidate, known to the grader.</td><td class="b-col">Our probers generate adversarial inputs at grading time (e.g. rephrasing chest pain as tightness that won't go away) rather than being planted in advance.</td><td>Same purpose (catch the naive path missing something), opposite mechanism — Tekstac's traps are static and pre-written; ours are dynamic and generated per submission.</td></tr>
+<tr><td>Trust-but-verify</td><td class="a-col">Unvalidated AI usage scores lower than not using AI tools at all.</td><td class="b-col">If a report claims a RAGAS score the code never produced, flag LOW confidence (Section 3.3).</td><td>Both refuse to let fluent, confident output substitute for verified output.</td></tr>
+<tr><td>Failure signature</td><td class="a-col">One paragraph per tier describing a recognizable pattern of not-quite-ready work.</td><td class="b-col">Same now, as of v5.0 — plus a separate hard-escalation rule for single dealbreakers, which Tekstac doesn't have an equivalent of.</td><td>This is the one row where ours is now richer than Tekstac's, not just equivalent.</td></tr>
+<tr><td>Pass/fail definition</td><td class="a-col">Four explicit bands with named meanings.</td><td class="b-col">Same four bands, same cut points, adopted directly in v5.0.</td><td>Fully aligned now.</td></tr>
+<tr><td>Environment discipline</td><td class="a-col">A candidate can't be graded fairly if their VM has different tools than another candidate's.</td><td class="b-col">A submission can't be graded fairly if it's tested against a different knowledge base or test scenario than another submission.</td><td>Same underlying worry: an uncontrolled environment makes scores incomparable, regardless of what's being graded.</td></tr>
+</tbody>
+    </table>
+  </div>
+</section>
+
+<section id="weightshift">
+  <h2><span class="num">03</span>Both systems shift toward governance as altitude/complexity rises</h2>
+  <p class="section-intro">Bucketing each framework's criteria into three themes — <strong>Technical
+  execution</strong>, <strong>Governance/Risk</strong>, and <strong>Communication</strong> — reveals the
+  same underlying shape in both documents, even though one reweights a fixed rubric across career
+  tiers and the other varies criteria across technology domains.</p>
+
+  <div class="chart-grid-2">
+    <div class="chart-card">
+      <h4>Tekstac — weight by career altitude</h4>
+      <p class="chart-note">Same 7 competencies, rebucketed. Technical drops from 75% to 35% by the Strategist tier.</p>
+      <div class="chart-box"><canvas id="tekstacShift"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h4>Our evaluator — weight by domain</h4>
+      <p class="chart-note">Different criteria per domain, rebucketed. Governance rises from 0% (RAG) to 45% (MCP).</p>
+      <div class="chart-box"><canvas id="evaluatorShift"></canvas></div>
+    </div>
+  </div>
+
+  <div class="callout">
+    <strong>Same chart type now, so bar heights are directly comparable — but the x-axis still means
+    something different underneath.</strong> Tekstac's three tiers are one person's possible career
+    path — a single Builder could plausibly grow into a Strategist. Our four domains are independent
+    tracks — a RAG submission never "becomes" an MCP submission. The shared shape (technical execution
+    shrinking, governance/communication growing) is a real structural parallel; it just arises from
+    progression in one document and from domain choice in the other.
+  </div>
+</section>
+
+<section id="thresholds">
+  <h2><span class="num">04</span>How each system decides "good enough"</h2>
+  <p class="section-intro">Tekstac defined this from the start. Our evaluator design didn't — <strong>this
+  was the first gap this comparison surfaced, and it's now closed as of v5.0.</strong></p>
+
+  <div class="chart-grid-2">
+    <div class="chart-card">
+      <h4>Tekstac's scoring thresholds</h4>
+      <div class="thresh-bar">
+        <div class="b1">&lt;50% Below</div>
+        <div class="b2">50–64% Developing</div>
+        <div class="b3">65–79% Pass</div>
+        <div class="b4">80–100% Strong hire</div>
+      </div>
+      <div class="thresh-cap">
+        <div class="c1">Not ready for the role</div>
+        <div class="c2">Targeted upskilling needed</div>
+        <div class="c3">Ready with standard onboarding</div>
+        <div class="c4">Ready to mentor others</div>
+      </div>
+    </div>
+    <div class="chart-card">
+      <h4>Our evaluator's thresholds (adopted in v5.0, Section 2.5)</h4>
+      <div class="thresh-bar">
+        <div class="b1">&lt;50% Below</div>
+        <div class="b2">50–64% Developing</div>
+        <div class="b3">65–79% Pass</div>
+        <div class="b4">80–100% Distinction</div>
+      </div>
+      <div class="thresh-cap">
+        <div class="c1">Substantial rework needed</div>
+        <div class="c2">Targeted rework on flagged criteria</div>
+        <div class="c3">Ready for demo and certification</div>
+        <div class="c4">Reference example for future cohorts</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout">
+    <strong>Resolved, same cut points, one renamed band:</strong> the Multi-Domain Agentic Evaluator now
+    uses the identical four bands and identical percentage cut points as Tekstac, applied the same way
+    across all four domains so a "Pass" on the RAG track means the same thing as a "Pass" on the MCP
+    track. The only change is cosmetic — "Strong Hire" doesn't fit a capstone context, so it's renamed
+    "Distinction." Both documents flag these cut points as tunable defaults, not fixed law.
+  </div>
+</section>
+
+<section id="principles">
+  <h2><span class="num">05</span>Shared design principles</h2>
+  <div class="principle-grid">
+    <div class="principle-card">
+      <span class="ptag">Trust but verify</span>
+      <h4>Don't reward blind AI acceptance</h4>
+      <p>Tekstac scores unvalidated AI usage <em>lower</em> than not using AI tools at all. As of v5.0,
+      our evaluator has the same competency directly, not just an analogy: an AI tool usage auditor with
+      the identical scoring rule, alongside its existing confidence-tagged findings for every other check.</p>
+      <div class="mapping"><strong>Tekstac:</strong> AI Tool Usage competency, all tiers · <strong>Ours:</strong> Section 2.7 (AI tool usage auditor) + confidence-tagged findings, Section 2.3</div>
+    </div>
+    <div class="principle-card">
+      <span class="ptag">Deliberate traps</span>
+      <h4>Plant issues the naive path would miss</h4>
+      <p>Tekstac's P1–P9 issues are invisible to candidates but known to evaluators. Our probers
+      (rephrasing-bypass, privilege-escalation) deliberately try inputs a submission's team likely never
+      tested against.</p>
+      <div class="mapping"><strong>Tekstac:</strong> Planted Issues tables, all 3 tiers · <strong>Ours:</strong> Domain B/C/D Tier 3 probers, Section 6</div>
+    </div>
+    <div class="principle-card">
+      <span class="ptag">Failure signatures</span>
+      <h4>Define what "reaching above your level" looks like</h4>
+      <p>Every Tekstac tier has a named "reaching up" calibration note. As of v5.0, our evaluator has the
+      direct equivalent — a named "reaching" signature per domain — <em>plus</em> a separate hard-escalation
+      rule for single dealbreakers that Tekstac has no equivalent of.</p>
+      <div class="mapping"><strong>Tekstac:</strong> Calibration Note, each tier · <strong>Ours:</strong> Sections 3.11/4.9/5.9/6.10 (signatures) + Escalation/coach agent (hard rule)</div>
+    </div>
+    <div class="principle-card">
+      <span class="ptag">Controlled environment</span>
+      <h4>Fix the environment so scores are comparable</h4>
+      <p>Tekstac gives every candidate an identical pre-configured VM and toolset. Our evaluator insists
+      on one facilitator-owned grading dataset/scenario set per domain, for the same reason: without a
+      fixed environment, scores across submissions aren't actually comparable.</p>
+      <div class="mapping"><strong>Tekstac:</strong> Assessment Environment, p.4 · <strong>Ours:</strong> Common Design Rules, Section 2.3</div>
+    </div>
+  </div>
+</section>
+
+<section id="differences">
+  <h2><span class="num">06</span>Where they genuinely differ</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Aspect</th><th class="a-col">Tekstac</th><th class="b-col">Agentic Evaluator</th></tr></thead>
+      <tbody>
+        <tr><td>What's actually judged</td><td class="a-col">A person's judgment and skill, demonstrated once, live</td><td class="b-col">A software artefact's behaviour, tested repeatedly and adversarially</td></tr>
+        <tr><td>Grading consistency risk</td><td class="a-col">Inter-evaluator variance between human graders</td><td class="b-col">Consistency of AI-generated adversarial questions across submissions</td></tr>
+        <tr><td>What happens on ambiguity</td><td class="a-col">Human evaluator uses judgment and calibration notes</td><td class="b-col">Automatic escalation to a human facilitator</td></tr>
+        <tr><td>Scaling constraint</td><td class="a-col">Bounded by evaluator time and calibration training</td><td class="b-col">Bounded by engineering build effort per domain (Section 7 of the evaluator doc)</td></tr>
+        <tr><td>Progression model</td><td class="a-col">Same person could plausibly grow from Tier 1 to Tier 3 over a career</td><td class="b-col">Domains are independent tracks; a submission belongs to one, not a growth path across them</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="borrow">
+  <h2><span class="num">07</span>What each could borrow from the other</h2>
+  <div class="doc-cards">
+    <div class="doc-card">
+      <div class="kicker">Adopted in v5.0 — no longer a gap</div>
+      <h3>What our evaluator took from Tekstac</h3>
+      <ul>
+        <li>✓ Explicit four-band pass/fail thresholds per domain — Section 2.5</li>
+        <li>✓ A named "reaching" failure signature per domain, for facilitator calibration, alongside (not instead of) the hard-escalation rule — Sections 3.11, 4.9, 5.9, 6.10</li>
+        <li>✓ A separately weighted "validated AI tool use" competency for learners who build their capstones with AI coding tools — Section 2.7</li>
+      </ul>
+    </div>
+    <div class="doc-card right">
+      <div class="kicker">Still open — Tekstac is a separate, published document</div>
+      <h3>What Tekstac could take from our evaluator</h3>
+      <ul>
+        <li>A confidence-tagged scoring model — distinguishing "verified by execution" from "inferred from the artefact" per competency, not just a single blended score</li>
+        <li>An explicit anti-decomposition style check — catching a candidate who gets each task's checkbox right without ever tying the pieces into one coherent system</li>
+        <li>A standard interface/output contract per task, the way our evaluator requires submissions expose a common function signature, to make automated pre-screening of deliverables possible before human review</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+</div>
+
+<footer>Comparing: Tekstac AI-Role Capability Assessment (July 2026) and Multi-Domain Agentic Evaluator — Design Document (v5.0) · Refreshed after v5.0 adopted three items this comparison originally flagged as gaps</footer>
+
+<script>
+Chart.register(ChartDataLabels);
+Chart.defaults.set('plugins.datalabels', { display:false });
+Chart.defaults.font.family = "-apple-system, 'Segoe UI', system-ui, Roboto, Helvetica, Arial, sans-serif";
+Chart.defaults.color = '#3A3F4B';
+Chart.defaults.font.size = 12;
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const animOpt = reduceMotion ? false : { duration: 650, easing: 'easeOutQuart' };
+
+new Chart(document.getElementById('tekstacShift'), {
+  type:'bar',
+  data:{
+    labels:['Tier 1: Builder','Tier 2: Workflow Engineer','Tier 3: Strategist'],
+    datasets:[
+      { label:'Technical execution', data:[75,75,35], backgroundColor:'#2A6F6F' },
+      { label:'Governance/Risk', data:[15,15,35], backgroundColor:'#A83E5D' },
+      { label:'Communication', data:[10,10,30], backgroundColor:'#B98900' }
+    ]
+  },
+  options:{
+    responsive:true, maintainAspectRatio:false, animation:animOpt,
+    plugins:{ legend:{ position:'bottom', labels:{ boxWidth:10, font:{size:11} } }, tooltip:{ callbacks:{ label:(ctx)=> `${ctx.dataset.label}: ${ctx.raw}%` } } },
+    scales:{ y:{ beginAtZero:true, max:100, title:{ display:true, text:'% of rubric weight' }, grid:{ color:'#E1E4E9' } }, x:{ grid:{ display:false } } }
+  }
+});
+
+new Chart(document.getElementById('evaluatorShift'), {
+  type:'bar',
+  data:{
+    labels:['A: RAG','B: Multi-Agent','C: MCP','D: Nexus'],
+    datasets:[
+      { label:'Technical execution', data:[80,50,40,55], backgroundColor:'#2A6F6F' },
+      { label:'Governance/Risk', data:[0,25,45,40], backgroundColor:'#A83E5D' },
+      { label:'Communication', data:[20,25,15,5], backgroundColor:'#B98900' }
+    ]
+  },
+  options:{
+    responsive:true, maintainAspectRatio:false, animation:animOpt,
+    plugins:{ legend:{ position:'bottom', labels:{ boxWidth:10, font:{size:11} } }, tooltip:{ callbacks:{ label:(ctx)=> `${ctx.dataset.label}: ${ctx.raw}%` } } },
+    scales:{ y:{ beginAtZero:true, max:100, title:{ display:true, text:'% of rubric weight' }, grid:{ color:'#E1E4E9' } }, x:{ grid:{ display:false } } }
+  }
+});
+</script>
+
+</body>
+</html>
