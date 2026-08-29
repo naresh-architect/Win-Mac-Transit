@@ -1,96 +1,31 @@
-= AI Enablement Lead — Frontier Engineering Career Write-Up
-:doctype: article
-:author: [Your Name]
-:revdate: {docdate}
-:sectnums:
-:toc: left
-:toclevels: 2
+Architect12#$%
 
-_Leadership-facing narrative, built for hands-on technical depth — for a job move._
+sk-R5RM6V-duLrOpcwO2wxMFg
 
-NOTE: This document is written to be read by programme/people leadership (hiring managers, skip-levels, panel interviewers) who care about capability and business risk, not just code. The framing throughout leads with what was technically built, then translates it into what that means for delivery, risk, and speed — never the reverse.
 
----
+Git global setup
+git config --global user.name "frontier_hiring02 ."
+git config --global user.email "frontier_hiring02@test.com"
 
-== 1. Positioning Statement
+Create a new repository
+git clone https://gitlab-trial2.tekstac.com/frontier_hiring02/astra-frontier.git
+cd astra-frontier
+touch README.md
+git add README.md
+git commit -m "add README"
+git push -u origin master
 
-Use as a headline, opening line, or the first sentence a leader reads.
+Push an existing folder
+cd existing_folder
+git init
+git remote add origin https://gitlab-trial2.tekstac.com/frontier_hiring02/astra-frontier.git
+git add .
+git commit -m "Initial commit"
+git push -u origin master
 
-[quote]
-____
-As AI Enablement Lead, I designed and built a 6-week, end-to-end AI engineering curriculum — LLM foundations through RAG, multi-agent orchestration, and the Model Context Protocol, to production deployment — so that engineers don't just use GenAI, they can ship it, secure it, and defend their design decisions to a client.
-____
-
----
-
-== 2. Leadership Narrative (Executive Summary)
-
-*Use this when the audience is a hiring manager, a programme sponsor, or anyone deciding whether you can own technical capability-building at scale.*
-
-As **AI Enablement Lead**, I own the technical depth of how an organisation trains engineers to build and ship GenAI systems — not a workshop series, a full curriculum architecture.
-
-**What I built, technically:**
-
-* A 6-week programme spanning the entire GenAI engineering stack: LLM APIs and prompt engineering → structured output and function calling → RAG pipelines with RAGAS-based evaluation → multi-agent orchestration (LangChain, AutoGen/Microsoft Agent Framework, CrewAI) → the Model Context Protocol (MCP) → production guardrails (prompt-injection defence, PII redaction, audit logging) → containerised deployment.
-* Every capstone built against a real regulated-industry scenario — pharma regulatory intake, fintech AML/KYC, insurance claims, healthcare triage, digital banking, wealth management — because an engineer who can only build against a toy dataset is not client-ready.
-* A final integrative capstone that forces all four technical layers to operate as *one deployed system*, evaluated by tracing a single real request end-to-end — not four disconnected demos passed off as "done."
-
-**Why leadership should care:**
-
-* This directly de-risks client delivery: engineers coming out of this programme have already been evaluated on the failure modes that actually show up in production — inconsistent RAG output, unbounded agent escalation, prompt injection, PII leakage — before they hit a live account.
-* It shortens ramp time on regulated engagements specifically, because the domain context (compliance, audit trails, data minimisation) is trained in, not bolted on after a client complaint.
-* It's built to stay current, not to calcify. When Microsoft moved AutoGen into maintenance mode and shipped Microsoft Agent Framework as its successor, I evaluated the migration — licensing, ecosystem lock-in, learning curve, enterprise-readiness — against alternatives (AG2, CrewAI, LangGraph) before deciding what the curriculum teaches going forward. That's the same judgment call a technical leader has to make when choosing a stack for a client, and I make it as a matter of course, not as a special project.
-
-**The role I'm looking for:** one where this exact combination — deep, current GenAI technical range, plus the judgment to keep a capability current as the field moves monthly — is the job, not a side skill.
-
----
-
-== 3. Resume Bullet Points
-
-*Title: AI Enablement Lead. Pick 3–5 depending on space; quantify the bracketed parts with your real numbers.*
-
-* Designed and delivered a 6-week AI engineering curriculum ([X] cohorts, [Y] engineers trained) covering the full GenAI stack — LLM APIs, prompt engineering, RAG, multi-agent orchestration, and the Model Context Protocol (MCP)
-* Built production-oriented capstone projects across 7 regulated industry domains (pharma, fintech/AML, insurance, e-commerce, healthcare, banking, wealth management), each requiring real deployment evidence — containerisation, health checks, structured logging — not a local demo
-* Architected a four-layer guardrails curriculum (input sanitisation, prompt-injection defence, output filtering, PII redaction) aligned to GDPR/HIPAA/India DPDP requirements, for engineers moving directly into regulated client environments
-* Evaluated and led the curriculum migration from AutoGen to Microsoft Agent Framework following Microsoft's move to maintenance mode — assessed AG2, CrewAI, and LangGraph as alternatives before committing to a technical direction
-* Designed a capstone-based assessment model requiring engineers to trace one real request end-to-end through intake, retrieval, multi-agent orchestration, and MCP-based tool access — rejecting any submission with four disconnected components instead of one working system
-
----
-
-== 4. Interview / Leadership Conversation Narrative (STAR)
-
-*Use when asked "tell me about a project you own" or "how do you decide what to teach in a fast-moving field."*
-
-**Situation** +
-New engineering joiners needed to move from basic LLM familiarity to being genuinely deployable on client GenAI work — able to build, secure, and explain production systems, not just complete tutorials.
-
-**Task** +
-Own the technical design of a programme that closes that gap in six weeks, without producing engineers who can write RAG code but can't operate inside a compliance boundary or defend a design decision.
-
-**Action** +
-I structured the curriculum around four escalating technical layers — LLM foundations, RAG, multi-agent systems, MCP — each anchored in a real regulated-industry capstone, with a final week requiring every layer to work together in one deployed system. I treated the curriculum as a living system rather than a fixed syllabus: when Microsoft deprecated AutoGen mid-programme in favour of Microsoft Agent Framework, I ran a structured evaluation — licensing, lock-in, learning curve, enterprise support — before deciding what to teach going forward, rather than leaving the old framework in place by default.
-
-**Result** +
-A curriculum that produces engineers who can build a deployed, guarded, multi-agent GenAI system end-to-end — and a demonstrated, repeatable process for keeping technical training current against a field that changes monthly, which is the actual scarce skill in AI enablement right now.
-
----
-
-== 5. Elevator Pitches (Leadership Audience)
-
-=== 30 Seconds
-
-"As AI Enablement Lead, I built a 6-week curriculum that takes engineers from LLM basics to deploying production multi-agent GenAI systems — RAG, orchestration, MCP, guardrails — against real regulated-industry scenarios like banking and healthcare. It's evaluated on whether one real request works end-to-end through the whole stack, not four disconnected demos."
-
-=== 2 Minutes
-
-"The gap I was solving wasn't 'can this person call an LLM API' — that's table stakes now. It was: can they build something that survives contact with a client and a compliance team. So I designed a six-week programme where every technical week — LLM foundations, RAG, multi-agent systems, MCP — is anchored in a real regulated-industry capstone, and the final week forces all four layers to work together in one deployed system, because that's the actual bar on a real engagement.
-
-I also run the curriculum the way I'd want a technical lead to run a stack decision: when Microsoft put AutoGen into maintenance mode this year and shipped Agent Framework as the successor, I didn't wait for someone to flag it — I evaluated the community fork, the licensing trade-offs, the lock-in risk, and made a call on what we teach going forward. That's the part I want to keep doing: staying close enough to the technical detail that I can make that call myself, at the pace the field actually moves."
-
----
-
-== Notes for You
-
-* Replace all `[bracketed placeholders]` with your real numbers before publishing or sending.
-* This version deliberately leads every section with the technical build, then translates it to leadership language — if a specific audience wants *less* translation and more raw technical detail (e.g. a technical panel interview), tell me and I'll strip the business-framing layer back out.
-* If you want a **one-page PDF/Word version** for actually attaching to an application, I can convert this AsciiDoc into a formatted document — just say so.
+Push an existing Git repository
+cd existing_repo
+git remote rename origin old-origin
+git remote add origin https://gitlab-trial2.tekstac.com/frontier_hiring02/astra-frontier.git
+git push -u origin --all
+git push -u origin --tags
