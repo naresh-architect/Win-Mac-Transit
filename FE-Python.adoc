@@ -1,0 +1,109 @@
+= Python Prerequisites & Progressive Skill Map
+6-Week Immersive Programme — Frontier Engineering
+:toc: right
+:toclevels: 3
+:sectnums:
+
+== How to Use This Document
+
+This is not a Python course — it's a diagnostic map. Section 0 lists what's assumed as baseline before Day 1 of Week 2 (Week 1 is the behavioral boot camp; no Python needed there). Sections for Week 2 onward list the *additional* Python fluency each week's technical content actually requires, in the order it gets used. Run the Section 0 checklist informally on Day 1 of Week 2 — that's the fastest way to find real gaps before they surface mid-lab.
+
+== Section 0 — Assumed Baseline (Verify on Day 1 of Week 2)
+
+=== Core Language
+* Variables, data types, and type coercion
+* Control flow — `if`/`elif`/`else`, `for`, `while`
+* Functions — parameters, default arguments, return values, `*args`/`**kwargs`
+* Core data structures — lists, tuples, dictionaries, sets, and their common methods
+* String formatting — f-strings, `.format()`
+
+=== Structure & Tooling
+* Modules and imports — `import`, `from ... import`, relative vs. absolute imports
+* Basic OOP — classes, `__init__`, instance vs. class attributes, inheritance basics
+* Exception handling — `try`/`except`/`finally`, raising exceptions
+* File I/O — reading/writing text files, `with open(...)`
+* Virtual environments and `pip` — creating an environment, installing packages, `requirements.txt`
+
+== Week 2 — Python for LLM Foundations & Prompt Engineering
+
+=== Working with APIs
+* The `requests` library — GET/POST, headers, request/response bodies
+* Environment variables — `os.environ`, `.env` files via `python-dotenv`
+* `json` module — parsing and serialising nested dict/list structures
+
+=== Structured Output Foundations
+* Type hints — `typing` module (`List`, `Dict`, `Optional`, `Union`)
+* Introduction to Pydantic — `BaseModel`, `Field`, basic validators
+* Decorators — syntax and use (needed before function-calling/tool patterns)
+
+=== Program Flow for LLM Calls
+* Generators and `yield` — relevant for streaming responses
+* `async`/`await` basics — awaiting a single coroutine, why it matters for streaming
+* Building a simple CLI — `input()`/`argparse` for the intake-assistant labs
+
+== Week 3 — Python for RAG Pipelines
+
+=== Data & File Handling
+* `pathlib` and `os` — walking directories, handling multiple file types
+* Regular expressions (`re`) — text cleaning and chunking
+* Reading structured formats — CSV via `csv`/`pandas`, basic PDF/DOCX text extraction
+
+=== Numerical & Tabular Basics
+* `pandas` fundamentals — DataFrames, filtering, basic transforms (for CSV/SQL RAG)
+* `numpy` fundamentals — arrays, basic vector operations (for understanding embeddings)
+* List/dict comprehensions — used heavily in chunking and metadata-tagging code
+
+=== Working with External Libraries
+* Installing and instantiating SDK clients (embedding models, vector DB clients)
+* Basic `sqlite3` or SQLAlchemy usage — for the SQL-RAG option
+
+== Week 4 — Python for Agentic AI & Multi-Agent Systems
+
+=== Deeper OOP for Agent Design
+* Abstract base classes / interfaces — defining a common "agent" contract
+* Composition vs. inheritance — when an agent *has* a tool vs. *is* a role
+* `dataclasses` — lightweight structured state objects
+
+=== State & Concurrency
+* Serialisation — `json`/`pickle` for saving and reloading agent state
+* `async`/`await` in more depth — concurrent agent/tool calls
+* Awareness-level threading/multiprocessing concepts — not required to implement, but to reason about
+
+=== Tool & Config Patterns
+* Decorators for tool registration — the pattern behind `@tool`-style APIs
+* Reading YAML/config files — `pyyaml`, structuring multi-agent configuration
+
+== Week 5 — Python for MCP, Guardrails & Production Deployment
+
+=== Building Servers
+* Async web framework basics — request/response lifecycle (FastMCP follows a FastAPI-like pattern)
+* `async def` endpoints and dependency-injection-style patterns
+
+=== Reliability & Safety Code
+* `logging` module — log levels, structured (JSON) logging
+* `re` in depth — pattern-based input sanitisation and injection-signature detection
+* Basic testing — `pytest` fundamentals (fixtures, assertions) for guardrail/validation tests
+
+=== Packaging for Deployment
+* Project structure — organising a multi-file/multi-module Python package
+* Secrets and environment management in a deployable context — `.env`, avoiding hardcoded keys
+* Writing a minimal `Dockerfile` for a Python service (conceptual — not a Python topic itself, but immediately downstream of it)
+
+== Week 6 — Python for the Nexus Integrative Capstone
+
+No new Python syntax is introduced this week. What's actually tested is the ability to:
+
+* Structure a multi-module project so intake, retrieval, agent, and MCP-server code integrate cleanly
+* Reuse and compose code written in Weeks 2–5 rather than rewriting it
+* Trace a bug or failure across module boundaries — the same debugging fluency assumed since Section 0, now under integration pressure
+
+== Appendix — Day 1 Quick Diagnostic Checklist
+
+A fast, informal way to spot gaps before Week 2 begins in earnest. Ask learners to self-rate (comfortable / seen it / new to me) on:
+
+* Writing a function with default arguments and `*args`/`**kwargs`
+* Reading/writing a dictionary nested inside a list
+* Catching a specific exception vs. a bare `except:`
+* Explaining what a virtual environment is and why it's used
+* Reading a class with `__init__` and one inherited method
+* Recognising `async def` and `await` even without having written it
