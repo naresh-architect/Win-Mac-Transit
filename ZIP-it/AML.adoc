@@ -1,0 +1,581 @@
+= SmartIntake — Mini Capstone - Financial Services & AML Compliance Domain
+:author: Naresh Chaurasia
+:doctype: book
+:icons: font
+:revdate: {docdate}
+:revnumber: 1.0
+:revremark: First Edition
+:sectnumlevels: 5
+:sectnums: 5
+:source-highlighter: highlight.js
+:toc: right
+:toclevels: 5
+
+_Week 1 Mini-Project | 4-Week Immersive Programme — Frontier Engineering_ +
+_Level 2 — Working Knowledge_
+
+---
+
+== Overview
+
+SmartIntake is a CLI intake assistant for financial services compliance and AML (Anti-Money Laundering) queries. It consolidates every concept from Week 1 — API calls, prompt engineering, function calling, Pydantic validation, LangChain chains, and conversation memory — into a single cohesive system operating under the constraints of a heavily regulated financial environment.
+
+A compliance officer, AML analyst, or financial crime investigator types their query in free-text natural language across one or more turns. SmartIntake extracts five structured fields, validates them, asks follow-up questions when required fields are missing, and writes a log-safe record — never exposing sensitive customer identifiers, transaction references, or investigation details in plain-text logs.
+
+[cols="1,3", options="header"]
+|===
+| Field | Detail
+
+| Duration
+| 1 day (Friday, Week 1)
+
+| Team size
+| Solo or pairs
+
+| Deliverable
+| Working CLI tool + short code walkthrough (5–10 min)
+
+| Proficiency level
+| Level 2 — Working Knowledge
+
+| Primary language
+| Python 3.10+
+
+| APIs
+| OpenAI or Anthropic (learner's choice)
+
+| Domain
+| Financial Services — AML & Compliance Intake
+|===
+
+---
+
+== Domain Context — Financial Services AML & Compliance
+
+Banks, fintechs, and payment processors are subject to continuous regulatory oversight from bodies including the Financial Action Task Force (FATF), the Financial Crimes Enforcement Network (FinCEN), the Financial Conduct Authority (FCA), the Reserve Bank of India (RBI), and others. Every compliance interaction — from filing a Suspicious Activity Report to responding to a KYC exception — must be documented, classified, and routed with precision.
+
+=== Why Structured Intake Matters in This Domain
+
+AML and financial compliance teams receive queries, alerts, and obligations from multiple channels: transaction monitoring systems, customer due diligence reviews, internal audit findings, regulatory examination requests, and escalated customer disputes. Each query must be:
+
+. Classified by type so it enters the correct compliance workflow
+. Linked to the applicable regulation or guideline (e.g. FATF Recommendation 20, BSA/AML, FCA SYSC)
+. Assigned to the correct jurisdiction to ensure the right regulatory team handles it
+. Prioritised by urgency — STR/SAR filing deadlines are legally binding and carry significant penalties
+. Attributed to the submitting team or business unit for audit trail and workload management
+
+NOTE: *Why this domain for Week 1?* Financial services AML intake is an ideal Week 1 domain because it combines strict schema requirements (enum fields, required validators), real consequences for extraction failure (missed filing deadlines, regulatory sanctions), and rich natural language variation across business lines. It exercises every concept from Sections 1.1–1.5 under conditions that mirror a real production deployment.
+
+=== Regulatory Bodies and Frameworks Referenced
+
+[cols="1,3", options="header"]
+|===
+| Body / Framework | Relevance
+
+| FATF
+| Financial Action Task Force — global AML/CFT standards and recommendations
+
+| FinCEN
+| Financial Crimes Enforcement Network — US BSA/AML filings including SARs and CTRs
+
+| FCA
+| Financial Conduct Authority — UK financial crime and AML supervision
+
+| RBI
+| Reserve Bank of India — AML/CFT guidelines for Indian banks and fintechs
+
+| MAS
+| Monetary Authority of Singapore — AML/CFT notices for financial institutions
+
+| BSA
+| Bank Secrecy Act — US anti-money laundering framework
+
+| PMLA
+| Prevention of Money Laundering Act — India's primary AML legislation
+
+| PCI-DSS
+| Payment Card Industry Data Security Standard — payment fraud and data protection
+|===
+
+---
+
+== Learning Objectives
+
+SmartIntake tests and integrates every module from Week 1 within the financial services AML compliance domain:
+
+[cols="1,3", options="header"]
+|===
+| Week 1 Module | What SmartIntake Exercises
+
+| 1.1 — How LLMs Work
+| Direct API calls with domain-specific token awareness; `max_tokens` calibrated for compliance text extraction; optional streaming for SAR acknowledgement messages
+
+| 1.2 — Prompt Engineering Patterns
+| AML-specific persona and system message; few-shot examples drawn from real financial crime query patterns; negative prompting for compliance-critical edge cases including tipping-off risk
+
+| 1.3 — Structured Output & Function Calling
+| Tool schema matching the five compliance fields; Pydantic model with enum constraints; retry logic appropriate to a regulated environment where silent failures are not acceptable
+
+| 1.4 — LangChain Foundations
+| `PromptTemplate` with domain variables; extraction chain feeding a compliance confirmation chain; output parser for regulatory field types
+
+| 1.5 — Conversation Memory & Multi-Turn Chat
+| `ConversationBufferMemory` for short sessions; `ConversationSummaryMemory` for extended triage flows; multi-turn demo requirement is core to the capstone assessment
+|===
+
+---
+
+== The Problem Statement
+
+=== FinBridge Solutions — Fictional Organisation
+
+FinBridge Solutions is a mid-size fintech operating a payment platform and a digital lending product across three markets: India, UK, and Singapore. Its compliance function handles ongoing regulatory interactions for all three jurisdictions, a portfolio of 2.4 million active customers, and a transaction monitoring system generating 80–120 alerts per day.
+
+The compliance team receives 40–60 queries per week through a mix of internal ticket systems, Slack escalations, and direct email from business units. These queries originate from:
+
+* *AML / Transaction Monitoring* — suspicious activity reports, SAR/STR filings, threshold alerts, structuring patterns
+* *KYC / Customer Due Diligence* — enhanced due diligence exceptions, PEP screenings, adverse media hits
+* *Fraud Operations* — chargeback disputes, account takeover signals, first-party fraud investigations
+* *Regulatory Examinations* — responses to FCA, RBI, or MAS examination requests, document production
+* *Sanctions Screening* — OFAC, UN, EU sanctions matches requiring manual review and potential blocking
+
+Every query must be classified, linked to a regulation reference, assigned a jurisdiction, prioritised, and attributed to the submitting team before it enters the compliance workflow. Today this is done manually by a compliance triage analyst. SmartIntake automates the intake step.
+
+IMPORTANT: *The compliance constraint:* In a regulated financial environment, intake records are subject to regulatory examination and legal discovery. Two requirements follow: (1) logs must not contain sensitive identifiers such as customer account numbers, transaction IDs, or investigation case references in plain text — these create tipping-off risk and data protection exposure; (2) every intake record must be traceable to the submitting business unit. Both constraints are reflected in the SmartIntake schema and logging requirements below.
+
+---
+
+== Extracted Fields — Data Schema
+
+SmartIntake must reliably extract the following five fields from free-text compliance queries. These become the function/tool schema and the Pydantic model.
+
+[cols="1,1,1,2,2", options="header"]
+|===
+| Field | Type | Required | Enum Values / Format | Description
+
+| `query_type`
+| `str` (enum)
+| Yes
+| `sar_str_filing`, `kyc_exception`, `transaction_dispute`, `sanctions_match`, `regulatory_examination`, `fraud_investigation`, `general_enquiry`
+| The nature of the compliance interaction. Maps to the compliance workflow pathway.
+
+| `regulation_ref`
+| `str` (enum)
+| Yes
+| `FATF_R20`, `BSA_AML`, `FCA_SYSC`, `RBI_PMLA`, `MAS_AML`, `PCI_DSS`, `OFAC_SDN`, `other`
+| The primary regulatory framework or guideline the query relates to.
+
+| `jurisdiction`
+| `str` (enum)
+| Yes
+| `india`, `uk`, `singapore`, `usa`, `eu`, `multi_jurisdictional`, `general`
+| The regulatory jurisdiction the query falls under. Determines which compliance team handles it.
+
+| `urgency`
+| `str` (enum)
+| Yes
+| `routine`, `standard`, `urgent`, `critical`
+| Deadline-driven priority. `critical` = legally binding filing deadline within 24 hours (e.g. STR/SAR deadline).
+
+| `submitting_team`
+| `str`
+| Yes
+| Free text — team or business unit name. Ask if not provided.
+| Used for audit trail attribution and workload tracking. Must not contain individual person names or customer identifiers.
+|===
+
+NOTE: *Domain note on `urgency`:* In AML and financial compliance contexts, urgency is deadline-driven, not sentiment-driven. A query containing words like "please handle when possible" may still be `critical` if it concerns an STR filing deadline within 24 hours. The system prompt must instruct the model not to infer urgency from casual language but to ask explicitly when the deadline context is unclear. Additionally, the model must never ask questions that could constitute tipping-off a customer — urgency questions should be framed around internal deadlines only.
+
+---
+
+== Architecture
+
+SmartIntake has five logical layers. Each maps directly to a Week 1 module. The architecture mirrors the pharma SmartIntake; only the domain, schema, and prompting constraints change.
+
+[cols="1,3", options="header"]
+|===
+| Layer | Week 1 Module and Role
+
+| Layer 1 — LLM API
+| Week 1.1: Direct API calls, token management, debug logging
+
+| Layer 2 — Prompt Engineering
+| Week 1.2: AML-specific persona, few-shot examples, negative prompting including tipping-off risk, CoT instruction
+
+| Layer 3 — Function Calling + Pydantic
+| Week 1.3: Tool schema for five compliance fields, `IntakeRecord` model, retry/fallback logic
+
+| Layer 4 — LangChain Orchestration
+| Week 1.4: `extraction_chain` and `confirmation_chain`, domain output parser
+
+| Layer 5 — Conversation Memory
+| Week 1.5: `BufferMemory` / `SummaryMemory`, multi-turn session loop, three required paths
+|===
+
+---
+
+== Detailed Requirements
+
+=== Layer 1 — LLM API Integration (Week 1.1)
+
+* Make authenticated calls to either the OpenAI or Anthropic API.
+* Set `max_tokens` deliberately — compliance extraction does not need large response budgets; 300 tokens should be sufficient for the extraction call.
+* Log token counts per call to a `debug.log` file.
+* *Compliance requirement:* logs must never contain the free-text content of the user's message in plain text — log only the extracted structured fields and token counts. This mirrors real financial services audit logging requirements and reduces tipping-off and data protection risk.
+* *Extension:* stream the assistant's conversational responses for a more responsive feel.
+
+=== Layer 2 — Prompt Engineering (Week 1.2)
+
+The system prompt must be carefully designed for the AML and financial compliance context. It must:
+
+* Set the persona as a financial crime compliance intake specialist — precise, professional, never assumes urgency from informal language, and never asks questions that could tip off a customer about an investigation.
+* Include at least two few-shot examples using realistic AML and financial compliance query language.
+* Use negative prompting — three critical constraints for this domain:
+** Do not infer urgency from words like "please", "urgent", or "ASAP" alone — ask for the actual filing or response deadline.
+** Do not extract individual names, customer references, or account numbers as `submitting_team` — teams and business units only, never persons or customer identifiers.
+** Do not invent a `regulation_ref` — use `other` if the applicable framework is not clearly identifiable from the query.
+* Include a chain-of-thought instruction: _"Think step by step about the regulatory jurisdiction and compliance context before choosing enum values."_
+
+.Example System Prompt Structure
+[source,text]
+----
+You are SmartIntake, a financial crime compliance intake specialist.
+Your job is to extract structured information from AML and compliance queries.
+
+RULES:
+- Never infer urgency from tone alone. Ask for the filing or response deadline explicitly if unclear.
+- submitting_team must be a team or business unit, never an individual person's name or a customer identifier.
+- Use 'other' for regulation_ref if the framework is not clearly identifiable.
+- Never ask questions that could constitute tipping off a customer about an ongoing investigation.
+- Think step by step about the regulatory jurisdiction and compliance context before choosing enum values.
+
+EXAMPLE 1:
+Query: "Transaction monitoring flagged a structuring pattern on a business account.
+        We need to file an STR with FinCEN. The 30-day window closes soon."
+Extracted: { "query_type": "sar_str_filing", "regulation_ref": "BSA_AML",
+  "jurisdiction": "usa", "urgency": <ask for exact deadline>, "submitting_team": <ask> }
+
+EXAMPLE 2:
+Query: "KYC team here. We have a PEP match on a new customer onboarding in our UK business.
+        Enhanced due diligence required before account activation."
+Extracted: { "query_type": "kyc_exception", "regulation_ref": "FCA_SYSC",
+  "jurisdiction": "uk", "urgency": "urgent", "submitting_team": "KYC" }
+----
+
+=== Layer 3 — Function Calling & Pydantic Validation (Week 1.3)
+
+==== Pydantic Model
+
+[source,python]
+----
+from pydantic import BaseModel, validator
+from typing import Literal
+
+class IntakeRecord(BaseModel):
+    query_type: Literal[
+        "sar_str_filing", "kyc_exception", "transaction_dispute",
+        "sanctions_match", "regulatory_examination",
+        "fraud_investigation", "general_enquiry"
+    ]
+    regulation_ref: Literal[
+        "FATF_R20", "BSA_AML", "FCA_SYSC", "RBI_PMLA",
+        "MAS_AML", "PCI_DSS", "OFAC_SDN", "other"
+    ]
+    jurisdiction: Literal[
+        "india", "uk", "singapore", "usa",
+        "eu", "multi_jurisdictional", "general"
+    ]
+    urgency: Literal["routine", "standard", "urgent", "critical"]
+    submitting_team: str
+
+    @validator("submitting_team")
+    def team_must_not_be_empty(cls, v):
+        if not v.strip():
+            raise ValueError("submitting_team cannot be empty")
+        return v.strip().title()
+
+    @validator("submitting_team")
+    def team_not_a_person_or_identifier(cls, v):
+        # Heuristic: reject single capitalised tokens that look like person names.
+        # Also reject values that look like account or case reference numbers.
+        # Real production systems would use a NER model and regex for identifiers.
+        if len(v.split()) == 1 and v[0].isupper() and v.isalpha():
+            raise ValueError(
+                "submitting_team must be a team or business unit, not an individual name"
+            )
+        if any(char.isdigit() for char in v):
+            raise ValueError(
+                "submitting_team must not contain numeric identifiers — "
+                "provide a team or business unit name only"
+            )
+        return v
+----
+
+==== Validation and Retry Logic
+
+* If the API returns a tool call with missing required fields, catch the `ValidationError` and re-prompt the user to supply what is missing.
+* After two failed extraction attempts on the same turn, fall back to asking the user a direct clarifying question.
+* Never raise an unhandled exception to the terminal.
+* *Compliance requirement:* on fallback, log the failure reason (missing field names only), not the user's raw message.
+
+.Graceful Degradation Pattern
+[source,python]
+----
+for attempt in range(2):
+    try:
+        record = IntakeRecord(**tool_args)
+        break
+    except ValidationError as e:
+        missing = [err["loc"][0] for err in e.errors()]
+        ask_user_for(missing)
+else:
+    # Two failed attempts — ask directly
+    print("I was unable to extract your details automatically. Let me ask directly.")
+    collect_fields_manually()
+----
+
+=== Layer 4 — LangChain Orchestration (Week 1.4)
+
+Build two LangChain chains:
+
+[cols="1,3", options="header"]
+|===
+| Chain | Purpose
+
+| `extraction_chain`
+| Takes the user's free-text message, applies the AML system prompt with few-shot examples, calls the LLM with the function schema, and returns the parsed tool call arguments.
+
+| `confirmation_chain`
+| After successful extraction and Pydantic validation, generates a compliance-style confirmation summary for the user to review before saving. Format: reference the regulation and query type formally, state the urgency tier and jurisdiction, and ask for confirmation.
+|===
+
+[TIP]
+====
+The confirmation message should read like a compliance acknowledgement, not a chat response. Example: _"Intake recorded: FCA SYSC KYC exception for UK jurisdiction, classified as urgent priority, submitted by the KYC Operations team. Please confirm or correct before this record is saved."_
+====
+
+=== Layer 5 — Conversation Memory & Multi-Turn Loop (Week 1.5)
+
+* Use `ConversationBufferMemory` for sessions under 10 turns.
+* Switch to `ConversationSummaryMemory` if the session exceeds 10 turns.
+* The session loop must handle the three required paths:
+
+[cols="1,3", options="header"]
+|===
+| Path | Description
+
+| Happy path
+| User provides all fields in one or two messages; extraction succeeds; confirmation generated; record saved.
+
+| Partial path (demo requirement)
+| User provides `query_type` and `regulation_ref` but omits `urgency` and `submitting_team`; assistant asks specifically for what is missing across at least three turns without re-asking for fields already provided.
+
+| Fallback path
+| User input is ambiguous, non-compliance related, or contains customer identifiers the system should not process; assistant degrades gracefully and asks the user to describe their query in compliance terms without referencing customer data.
+|===
+
+---
+
+== File Output — Log-Safe Records
+
+Each successfully validated intake record must be saved as a JSON file. The log-safe requirement means the file must not contain the user's raw free-text message, any customer identifiers, transaction references, or case numbers.
+
+[source]
+----
+output/
+  intake_<timestamp>.json
+----
+
+.Example Output File
+[source,json]
+----
+{
+  "query_type": "sar_str_filing",
+  "regulation_ref": "BSA_AML",
+  "jurisdiction": "usa",
+  "urgency": "critical",
+  "submitting_team": "Transaction Monitoring",
+  "timestamp": "2026-06-20T09:15:00",
+  "turns_taken": 3,
+  "log_safe": true
+}
+----
+
+NOTE: *`log_safe: true`* is a sentinel confirming the record was written without the user's raw input text, customer identifiers, or transaction references. Include it so the demo can explicitly demonstrate compliance-aware logging behaviour. In a real regulated deployment, this field would be verified by an automated audit check and reviewed during regulatory examinations.
+
+---
+
+== Demo Requirement
+
+The demo has two mandatory parts:
+
+[cols="1,3", options="header"]
+|===
+| Demo Part | Requirement
+
+| Part 1 — Clean end-to-end submission
+| Show a complete intake from a single well-formed compliance query: user provides all five fields (some may be inferred by the model), Pydantic validates cleanly, the confirmation chain generates a compliant acknowledgement, and the record is saved. Highlight the log-safe output file and confirm no customer identifiers appear in it.
+
+| Part 2 — Partial submission across three or more turns
+| Show a realistic partial submission where the user provides `query_type` and `regulation_ref` but not `urgency` or `submitting_team`. Demonstrate that: (1) the assistant asks specifically for each missing field without re-asking for fields already provided; (2) conversation memory is working across turns; (3) the final record is saved only after all required fields are collected and validated.
+|===
+
+IMPORTANT: The three-turn partial submission demonstration is a core assessment criterion. The reviewer will specifically check that the assistant does not re-ask for a field the user has already provided in a previous turn.
+
+---
+
+== Evaluation Rubric
+
+[cols="2,1,3", options="header"]
+|===
+| Criterion | Weight | What the Reviewer Checks
+
+| Correct function/tool schema
+| 15%
+| Schema matches the five compliance fields with correct enum types and required markers. Enum values use the domain-specific values defined in this specification.
+
+| Pydantic validation in use
+| 15%
+| `IntakeRecord` model is applied to every extraction result. `ValidationError` is caught and handled. `submitting_team` validator fires correctly on individual names and numeric identifiers.
+
+| Graceful degradation
+| 20%
+| The CLI never crashes on bad input, a failed extraction, or a non-compliance query. Fallback path is demonstrated. Queries containing customer identifiers are handled without logging the identifier.
+
+| Multi-turn memory works
+| 20%
+| The assistant remembers context across turns. A user can provide `query_type` in turn 1 and `submitting_team` in turn 3 without being asked for `query_type` again. Three-turn demo path is shown.
+
+| Prompt design quality
+| 15%
+| System prompt has an AML persona, at least two domain-specific few-shot examples, three negative prompting constraints (including tipping-off), and a CoT instruction. Urgency is not inferred from tone alone.
+
+| Log-safe JSON output
+| 10%
+| Each completed record is saved as a timestamped `.json` file with all five fields, `turns_taken`, and `log_safe: true`. Raw user messages, customer identifiers, and transaction references do not appear in the file or `debug.log`.
+
+| Code walkthrough (5–10 min)
+| 5%
+| Learner can explain each layer, show a live extraction, and demonstrate the partial-submission multi-turn path and one fallback path.
+|===
+
+---
+
+== Extension Challenges
+
+Optional tasks for learners who finish early. Each targets a specific Week 1 concept applied to the AML compliance domain.
+
+[cols="1,1,3", options="header"]
+|===
+| Extension | Module | Task
+
+| E1 — Streaming confirmation
+| Week 1.1
+| Stream the compliance confirmation message character-by-character. In a financial crime investigation context, every word of the intake confirmation matters and streaming slows the analyst's review eye.
+
+| E2 — Urgency ablation
+| Week 1.2
+| Remove the negative prompt instruction about urgency inference. Run T1 and T2 again. Document how many times the model incorrectly infers urgency from tone rather than asking for the actual filing deadline.
+
+| E3 — Regulation ref disambiguation
+| Week 1.2
+| When `regulation_ref` is set to `other`, add a second extraction pass that generates a clarifying question listing the closest three matching frameworks based on the query context and jurisdiction.
+
+| E4 — Token cost per query type
+| Week 1.1
+| After each session, print a cost summary broken down by `query_type`. Observe whether `sar_str_filing` queries (longer, more complex) cost more tokens than `general_enquiry` queries.
+
+| E5 — Batch compliance triage
+| Week 1.3
+| Add a `--batch input.txt` mode that reads one compliance query per line, runs extraction on each, and saves results to `output/batch_<timestamp>.jsonl`. Include a summary: total records, breakdown by urgency tier and jurisdiction.
+|===
+
+---
+
+== Appendix A — Sample Test Inputs
+
+Use these five inputs to validate your system before the walkthrough demo. They cover all query types, a critical urgency case, the partial-submission path, and a non-compliance fallback.
+
+[cols="1,4,3", options="header"]
+|===
+| # | Input | Expected Behaviour
+
+| T1
+| _"Transaction monitoring here. We have a structuring pattern flagged on a business account in our US portfolio. Need to file a SAR with FinCEN — the 30-day clock is almost up."_
+| Single-turn extraction. `query_type`: `sar_str_filing`, `regulation_ref`: `BSA_AML`, `jurisdiction`: `usa`, `urgency`: `critical`, `submitting_team`: ask to confirm ("Transaction monitoring" is implied but confirm).
+
+| T2
+| _"Hi, we have a new OFAC sanctions hit on a customer in our Singapore business."_ (`urgency` and `submitting_team` not provided)
+| Partial path — three or more turns. Model extracts `query_type`: `sanctions_match`, `regulation_ref`: `OFAC_SDN`, `jurisdiction`: `singapore`. Must ask for `urgency` and `submitting_team` in separate turns without re-asking for what was already provided.
+
+| T3
+| _"KYC Operations here. The FCA has issued a Section 165 information request for our UK retail book. We have 10 business days to respond."_
+| All five fields present — clean single-turn extraction. `query_type`: `regulatory_examination`, `regulation_ref`: `FCA_SYSC`, `jurisdiction`: `uk`, `urgency`: `urgent`, `submitting_team`: `KYC Operations`.
+
+| T4
+| _"Can you tell me what the best restaurants are near our Mumbai office?"_
+| Non-compliance input. Graceful fallback — assistant explains it handles financial crime and AML compliance intake only and asks the user to describe their compliance query.
+
+| T5
+| _"Fraud ops team. We've detected a pattern of account takeover attempts on our India payments platform — looks like credential stuffing. Need to log this formally."_
+| `query_type`: `fraud_investigation`, `regulation_ref`: `RBI_PMLA`, `jurisdiction`: `india`, `urgency`: ask (no deadline stated), `submitting_team`: `Fraud Ops`. Partial — urgency must be asked.
+|===
+
+---
+
+== Appendix B — Suggested File Structure
+
+[source]
+----
+smartintake/
+├── main.py                  # CLI session loop
+├── chains.py                # LangChain chain definitions
+├── schema.py                # Pydantic IntakeRecord model
+├── prompts.py               # System prompt and PromptTemplate definitions
+├── tools.py                 # Function/tool schema for the LLM
+├── memory.py                # Memory setup and switching logic
+├── storage.py               # Log-safe JSON save helper
+├── output/                  # Saved intake records
+│   └── intake_<ts>.json
+├── debug.log                # Token usage log (no raw user messages or identifiers)
+└── requirements.txt
+----
+
+---
+
+== Appendix C — Plain Language Summary
+_For sharing with non-technical stakeholders and managers_
+
+=== The Problem SmartIntake Solves
+
+Imagine a fintech company's compliance team. Every day, they receive messages from colleagues across the business:
+
+* A transaction monitoring analyst flags a suspicious structuring pattern that needs a formal SAR filing with FinCEN before the 30-day statutory deadline.
+* A KYC officer escalates a Politically Exposed Person match that requires enhanced due diligence before account activation.
+* A fraud investigator reports a coordinated account takeover pattern that needs to be formally logged for regulatory reporting purposes.
+
+Each of these messages needs to be classified, linked to the right regulation, assigned to the right jurisdiction, and prioritised before anyone can act on it. Today, a compliance triage analyst reads each message and figures that out manually. SmartIntake automates that first step.
+
+=== What SmartIntake Does
+
+SmartIntake is a conversational assistant that a compliance team member types their query to — in plain English, no forms or dropdowns needed. It reads the message, identifies all the key compliance information, and saves a clean, structured record that the compliance team can act on immediately.
+
+From a message like _"Transaction monitoring here — we have a structuring pattern on a US business account and need to file a SAR with FinCEN, the 30-day window closes in two days"_ — SmartIntake automatically produces:
+
+[cols="1,1,1,1,1", options="header"]
+|===
+| Query Type | Regulation | Jurisdiction | Urgency | Team
+| sar_str_filing | BSA_AML | usa | critical | Transaction Monitoring
+|===
+
+If something is unclear — say the message does not state which team is submitting — SmartIntake politely asks, remembers what was already said, and never asks for the same thing twice. The final record is log-safe, meaning customer identifiers, transaction references, and investigation details are never written to plain-text logs, reducing tipping-off risk and data protection exposure.
+
+[NOTE]
+====
+*In one sentence:* SmartIntake reads a financial compliance query in plain English and turns it into a structured, audit-ready intake record — automatically, conversationally, and without exposing sensitive customer or investigation data in logs.
+====
+
+---
+
+_End of SmartIntake Mini-Capstone Specification_ +
+_4-Week Immersive Programme — Frontier Engineering | Week 1 | Financial Services AML Compliance Domain_
