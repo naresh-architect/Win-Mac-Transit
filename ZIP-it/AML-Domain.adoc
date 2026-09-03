@@ -1,0 +1,461 @@
+= AML & Financial Compliance — Domain Primer for Engineers
+:author: Naresh Chaurasia
+:doctype: book
+:icons: font
+:revdate: {docdate}
+:revnumber: 1.0
+:revremark: First Edition
+:sectnumlevels: 5
+:sectnums: 5
+:source-highlighter: highlight.js
+:toc: right
+:toclevels: 5
+
+_Supporting Document for SmartIntake Mini-Capstone_ +
+_4-Week Immersive Programme — Frontier Engineering | Week 1_
+
+---
+
+== What This Document Is
+
+This primer gives you just enough domain knowledge to build SmartIntake confidently. You do not need to become a compliance expert. You need to understand:
+
+* What AML is and why it matters
+* Who the key players are (regulators, teams, frameworks)
+* What kinds of queries the system will handle
+* Why certain design decisions — like not logging customer identifiers — exist
+
+Read this once before you start coding. Refer back to specific sections when a schema field or prompt constraint feels unclear.
+
+---
+
+== Part 1 — What Is Money Laundering?
+
+=== The Basic Idea
+
+Money laundering is the process of making illegally obtained money appear legitimate. The classic example: a criminal earns ₹10 crore from drug trafficking. That money cannot be deposited in a bank or used openly without attracting attention. So the criminal runs it through a chain of transactions — fake invoices, shell companies, real estate purchases — until it looks like ordinary business income. At the end of that chain, the money is "clean."
+
+Banks and fintechs are the pipes through which this cleaning happens. That is why they are the primary target of AML regulation — regulators hold them responsible for detecting and reporting suspicious flows even when the bank itself is not a criminal actor.
+
+=== The Three Stages of Money Laundering
+
+Understanding these three stages helps you understand why certain query types exist in the schema.
+
+[cols="1,2,3", options="header"]
+|===
+| Stage | Name | What Happens
+
+| 1
+| Placement
+| Dirty money enters the financial system for the first time — cash deposits, prepaid cards, cryptocurrency exchanges. This is the highest-risk point.
+
+| 2
+| Layering
+| The money is moved through multiple transactions to obscure its origin — wire transfers between accounts, currency conversions, purchases and resales of assets. Transaction monitoring systems generate alerts at this stage.
+
+| 3
+| Integration
+| Clean-looking money re-enters the legitimate economy — real estate, investments, luxury goods, business revenue. By this stage, the trail is very hard to follow.
+|===
+
+=== Why Fintechs Are Particularly Exposed
+
+Traditional banks have decades of compliance infrastructure. Fintechs — especially payment platforms and digital lenders — are attractive to money launderers because:
+
+* Onboarding is fast and often digital-only
+* Transaction volumes are high, making individual transactions harder to scrutinise
+* Cross-border payments are common, adding jurisdictional complexity
+* Younger organisations may have thinner compliance teams
+
+FinBridge Solutions, the fictional company in this assignment, faces exactly this risk profile.
+
+---
+
+== Part 2 — What Is AML Compliance?
+
+AML (Anti-Money Laundering) compliance is the set of legal obligations, internal policies, and operational processes a financial institution uses to detect, prevent, and report money laundering and related financial crimes.
+
+In practical terms, it means a bank or fintech must:
+
+. *Know their customers* — verify identity, understand the source of funds, assess risk (KYC/CDD)
+. *Monitor transactions* — run automated systems that flag unusual patterns (Transaction Monitoring)
+. *Report suspicious activity* — file formal reports with regulators when something looks wrong (SAR/STR filing)
+. *Screen against sanctions lists* — check customers and counterparties against government blacklists (Sanctions Screening)
+. *Respond to regulators* — cooperate with examinations, audits, and information requests
+
+When the compliance team at FinBridge receives a query — "we have a structuring alert on a US account" — it needs to be routed into one of these five operational areas. That routing decision is what SmartIntake automates.
+
+---
+
+== Part 3 — The Regulatory Landscape
+
+You do not need to read any of these regulations. You need to know what they are so you can understand the `regulation_ref` enum values in the schema and write realistic prompts.
+
+=== Global Standard — FATF
+
+The *Financial Action Task Force (FATF)* is an intergovernmental body that sets the global standards for AML and counter-terrorist financing (CFT). It publishes 40 Recommendations that member countries are expected to implement in national law.
+
+*Recommendation 20* is the most operationally relevant for this assignment. It requires financial institutions to file a Suspicious Activity Report (SAR) or Suspicious Transaction Report (STR) whenever they suspect a transaction involves money laundering. This is a mandatory obligation — not discretionary.
+
+In the schema: `FATF_R20`
+
+=== United States — BSA / AML
+
+The *Bank Secrecy Act (BSA)* is the foundational US AML law. It requires financial institutions to:
+
+* File *Suspicious Activity Reports (SARs)* with FinCEN within 30 days of detecting suspicious activity
+* File *Currency Transaction Reports (CTRs)* for cash transactions above $10,000
+* Maintain records of wire transfers and monetary instruments
+
+*FinCEN* (Financial Crimes Enforcement Network) is the US Treasury bureau that collects and analyses these reports.
+
+In the schema: `BSA_AML`
+
+=== United Kingdom — FCA / SYSC
+
+The *Financial Conduct Authority (FCA)* regulates financial services firms in the UK. The relevant rulebook chapter is *SYSC* (Senior Management Arrangements, Systems and Controls), which requires firms to have adequate AML systems and controls.
+
+UK firms file *Suspicious Activity Reports (SARs)* with the National Crime Agency (NCA), not the FCA directly. The FCA supervises whether the firm's systems are adequate — and can fine firms heavily when they are not.
+
+In the schema: `FCA_SYSC`
+
+=== India — RBI / PMLA
+
+The *Reserve Bank of India (RBI)* supervises AML compliance for banks and payment system operators in India. The underlying law is the *Prevention of Money Laundering Act (PMLA)*, which requires entities to:
+
+* Conduct customer due diligence (KYC)
+* Maintain records for a minimum of five years
+* File *Suspicious Transaction Reports (STRs)* with the Financial Intelligence Unit – India (FIU-IND)
+
+In the schema: `RBI_PMLA`
+
+=== Singapore — MAS
+
+The *Monetary Authority of Singapore (MAS)* is both the central bank and financial regulator. It issues AML/CFT notices (primarily MAS Notice 626 for banks) requiring transaction monitoring, customer due diligence, and STR filing with the Suspicious Transaction Reporting Office (STRO).
+
+In the schema: `MAS_AML`
+
+=== Sanctions — OFAC / SDN List
+
+*OFAC* (Office of Foreign Assets Control) is a US Treasury agency that administers economic and trade sanctions. It maintains the *SDN List* (Specially Designated Nationals and Blocked Persons) — a roster of individuals, entities, and countries that US persons and institutions are prohibited from transacting with.
+
+Sanctions screening is distinct from AML but often handled by the same compliance team. A "sanctions match" means a customer or counterparty name has matched an entry on the SDN List or equivalent (UN, EU, UK sanctions lists). The institution must freeze the transaction and report.
+
+In the schema: `OFAC_SDN`
+
+=== Payment Security — PCI-DSS
+
+*PCI-DSS* (Payment Card Industry Data Security Standard) is not an AML regulation — it is a data security standard for organisations handling card payments. It appears in the schema because payment fintechs like FinBridge handle card data, and some compliance queries relate to data breaches or fraud patterns that have PCI-DSS implications.
+
+In the schema: `PCI_DSS`
+
+---
+
+== Part 4 — The Compliance Team and Their Queries
+
+This section maps the internal teams at a fintech to the query types in the schema. Understanding who sends which type of query will help you write better few-shot examples and understand why the multi-turn flows look the way they do.
+
+=== Transaction Monitoring Team
+
+*What they do:* Operate and review the automated system that scores every transaction for AML risk. The system generates alerts — a human analyst reviews each alert and decides whether to escalate to a SAR/STR filing.
+
+*Typical query:* "We have a structuring alert on Account X — three cash deposits just below the ₹50,000 threshold over five days. Need to log this for potential STR filing."
+
+*Structuring* (also called smurfing) is a specific technique where a launderer breaks large cash deposits into smaller amounts to avoid the threshold that triggers mandatory reporting. Transaction monitoring systems are specifically tuned to detect it.
+
+*Schema mapping:* `query_type: sar_str_filing`
+
+=== KYC / Customer Due Diligence Team
+
+*What they do:* Verify customer identity at onboarding and on an ongoing basis. Assess risk — a high-net-worth customer who is also a *Politically Exposed Person (PEP)* (a government official, their family, or close associate) requires enhanced scrutiny because of corruption risk.
+
+*Typical query:* "New business account application — the beneficial owner is listed as a PEP in our screening database. Need to escalate for enhanced due diligence before activation."
+
+*Schema mapping:* `query_type: kyc_exception`
+
+=== Sanctions Screening Team
+
+*What they do:* Screen every customer and every counterparty in every transaction against global sanctions lists. When a match is found — even a potential match, called a "hit" — the transaction must be paused and reviewed.
+
+*Typical query:* "Sanctions screening returned a potential OFAC SDN match on an inbound wire transfer to our Singapore entity. Need to determine whether this is a true match or false positive before releasing funds."
+
+*Schema mapping:* `query_type: sanctions_match`
+
+=== Fraud Operations Team
+
+*What they do:* Investigate financial fraud — account takeovers, identity theft, first-party fraud (customers fraudulently disputing legitimate transactions), and organised fraud rings. Fraud and AML overlap when fraud proceeds are laundered.
+
+*Typical query:* "We're seeing a coordinated credential stuffing pattern on our India payments platform — 300 failed login attempts from rotating IPs followed by successful logins and immediate P2P transfers. Need to log this formally."
+
+*Schema mapping:* `query_type: fraud_investigation`
+
+=== Regulatory Affairs / Compliance Team
+
+*What they do:* Manage formal interactions with regulators — examination responses, information requests, audit document production, and formal correspondence.
+
+*Typical query:* "FCA has issued a Section 165 skilled person review request covering our transaction monitoring systems. We have 10 business days to respond. Need to open a formal intake record."
+
+*Schema mapping:* `query_type: regulatory_examination`
+
+=== Customer Disputes / Operations
+
+*What they do:* Handle customer-facing complaints about transactions — unauthorised charges, failed payments, chargeback disputes. These enter the compliance workflow when fraud is suspected.
+
+*Typical query:* "Customer is disputing three card transactions totalling £840 on their UK account, claims they did not authorise them. Card was not reported lost. Possible CNP (card-not-present) fraud."
+
+*Schema mapping:* `query_type: transaction_dispute`
+
+---
+
+== Part 5 — Key Concepts for Prompt and Schema Design
+
+These are the concepts behind the non-obvious design decisions in the assignment. Read this section before writing your system prompt.
+
+=== What Is an STR / SAR?
+
+A *Suspicious Transaction Report (STR)* or *Suspicious Activity Report (SAR)* is a mandatory formal report that a financial institution must file with its national financial intelligence unit when it suspects a transaction involves money laundering or terrorist financing.
+
+Key facts that affect your system design:
+
+* Filing deadlines are legally binding — typically 30 days in the US (BSA), 7–10 days in the UK (POCA), 7 days in India (PMLA) after detection
+* Filing is *confidential* — the institution must not tip off the customer that a report has been filed
+* Failing to file carries criminal penalties for the institution and its officers
+
+This is why `urgency: critical` exists and why the tipping-off constraint is in the negative prompt.
+
+=== What Is Tipping Off?
+
+*Tipping off* is when a financial institution — deliberately or accidentally — alerts a customer or any other person that they are under suspicion or that an STR/SAR has been filed. It is a *criminal offence* in most jurisdictions.
+
+For SmartIntake, this means:
+
+* The system must never ask questions to a user in a way that could prompt them to warn a customer
+* The system prompt explicitly prohibits generating responses that reference investigation targets
+* Log-safe output is partly motivated by tipping-off risk — a log file visible to the wrong person could constitute tipping off
+
+=== What Is a PEP?
+
+A *Politically Exposed Person (PEP)* is someone who holds or has held a prominent public function — a government minister, senior military officer, judge, or state-owned enterprise executive — along with their immediate family and close associates. PEPs carry elevated corruption risk and require *Enhanced Due Diligence (EDD)*.
+
+When a KYC screening returns a PEP hit, the onboarding or account review cannot proceed until EDD is completed and approved. This is why KYC exception queries are often urgent.
+
+=== What Is Structuring?
+
+*Structuring* (also called smurfing) is the deliberate breaking up of large cash transactions into smaller amounts to avoid transaction reporting thresholds. For example, depositing $9,900 repeatedly instead of $10,000 to avoid the US CTR threshold.
+
+Structuring is itself a federal crime in the US under the BSA, regardless of whether the underlying money is from illegal activity.
+
+=== Why Does Jurisdiction Matter?
+
+Filing deadlines, reporting formats, and the identity of the receiving regulator differ by jurisdiction:
+
+[cols="1,1,1,2", options="header"]
+|===
+| Jurisdiction | Report Name | Filed With | Deadline (from detection)
+
+| USA
+| SAR
+| FinCEN
+| 30 days (60 days if no identified subject)
+
+| UK
+| SAR
+| National Crime Agency (NCA)
+| As soon as practicable — no fixed window but "consent SARs" have 7 days
+
+| India
+| STR
+| FIU-IND
+| 7 days
+
+| Singapore
+| STR
+| STRO
+| As soon as practicable
+|===
+
+This is why the `jurisdiction` field in the schema is required — the compliance team that handles the filing and the deadline they are working to differ entirely by jurisdiction.
+
+=== Why Must `submitting_team` Never Be a Person's Name?
+
+In a regulated environment, intake records are reviewed during regulatory examinations. An individual's name in an audit trail creates personal accountability exposure and potential data protection issues (GDPR in the UK/EU, PDPA in Singapore, DPDP Act in India). Teams and functions are the correct unit of attribution. This is why the Pydantic validator rejects single-name values.
+
+=== Why Are Raw Messages Not Logged?
+
+Two reasons:
+
+. *Customer data protection:* A free-text message from a fraud analyst might contain a customer account number, transaction ID, or investigation case reference. Writing this to a log file creates a data protection risk — log files are often accessible to a broader set of systems and people than the compliance platform itself.
+
+. *Tipping-off risk:* If a log file containing investigation details were accessed by the wrong person, it could constitute tipping off.
+
+The `log_safe: true` sentinel in the output JSON explicitly signals that the record was saved without raw message content.
+
+---
+
+== Part 6 — Realistic Query Language
+
+One of the challenges in building SmartIntake is that real compliance queries don't sound like database entries. Here are examples of how real compliance team members write, and what the system should extract from them.
+
+=== Example 1 — Obvious Fields
+
+[cols="1,1", options="header"]
+|===
+| What the user writes | What SmartIntake should extract
+
+| _"Transaction monitoring here. We have a structuring pattern flagged on a business account in our US portfolio. Need to file a SAR with FinCEN — the 30-day window closes in two days."_
+| `query_type: sar_str_filing`, `regulation_ref: BSA_AML`, `jurisdiction: usa`, `urgency: critical`, `submitting_team: Transaction Monitoring`
+|===
+
+=== Example 2 — Implied but Inferable
+
+[cols="1,1", options="header"]
+|===
+| What the user writes | What SmartIntake should extract
+
+| _"KYC ops here. New business customer onboarding in our UK entity — beneficial owner is flagged as a close associate of a sanctioned PEP. Enhanced due diligence required before we can proceed."_
+| `query_type: kyc_exception`, `regulation_ref: FCA_SYSC`, `jurisdiction: uk`, `urgency: urgent` (account activation is blocked — ask to confirm), `submitting_team: KYC Ops`
+|===
+
+=== Example 3 — Missing Fields (Partial Path)
+
+[cols="1,1", options="header"]
+|===
+| What the user writes | What SmartIntake should extract / ask
+
+| _"We have a potential OFAC match on an inbound wire."_
+| `query_type: sanctions_match`, `regulation_ref: OFAC_SDN` — must ask for `jurisdiction`, `urgency`, and `submitting_team`
+|===
+
+=== Example 4 — Ambiguous Urgency
+
+[cols="1,1", options="header"]
+|===
+| What the user writes | Correct behaviour
+
+| _"Please look at this when you get a chance — we have a KYC exception on a new account."_
+| Do NOT infer `urgency: routine` from "when you get a chance." A KYC exception blocking account activation may be `urgent`. Ask for the business impact and deadline explicitly.
+|===
+
+=== Example 5 — Non-Compliance Input (Fallback Path)
+
+[cols="1,1", options="header"]
+|===
+| What the user writes | Correct behaviour
+
+| _"Can you pull the quarterly revenue numbers for the India P&L?"_
+| This is not a compliance query. Respond gracefully: explain the system handles AML and financial compliance intake only, and ask the user to describe their compliance query.
+|===
+
+---
+
+== Part 7 — Glossary
+
+A quick reference for terms you will encounter in the assignment, test inputs, and when writing your prompts.
+
+[cols="1,3", options="header"]
+|===
+| Term | Plain English Definition
+
+| AML
+| Anti-Money Laundering — the set of laws, regulations, and procedures aimed at detecting and preventing illegal money flows through the financial system.
+
+| CFT
+| Counter-Financing of Terrorism — closely related to AML; preventing terrorist groups from raising, moving, and using funds.
+
+| SAR
+| Suspicious Activity Report — a mandatory report filed by a US financial institution with FinCEN when it suspects money laundering or fraud.
+
+| STR
+| Suspicious Transaction Report — the equivalent of a SAR in India, Singapore, and other non-US jurisdictions.
+
+| CTR
+| Currency Transaction Report — a report filed for cash transactions above $10,000 in the US.
+
+| KYC
+| Know Your Customer — the process of verifying a customer's identity, assessing their risk profile, and understanding the source of their funds.
+
+| CDD
+| Customer Due Diligence — the ongoing process of reviewing customer activity to ensure it is consistent with their stated profile. Standard CDD and Enhanced Due Diligence (EDD) are the two levels.
+
+| EDD
+| Enhanced Due Diligence — a deeper level of scrutiny applied to high-risk customers, including PEPs and those from high-risk jurisdictions.
+
+| PEP
+| Politically Exposed Person — someone who holds or has held a prominent public position, making them a higher corruption and bribery risk.
+
+| Structuring
+| The deliberate breaking of large cash transactions into smaller ones to avoid reporting thresholds. Also called smurfing. A criminal offence in most jurisdictions.
+
+| Tipping Off
+| Alerting a customer or other person that they are under investigation or that an STR/SAR has been filed. A criminal offence.
+
+| Sanctions
+| Government-imposed economic restrictions on specific individuals, entities, or countries. Transactions with sanctioned parties are prohibited.
+
+| SDN List
+| Specially Designated Nationals — the OFAC list of sanctioned individuals and entities. Matching a customer to this list requires immediate transaction blocking and reporting.
+
+| FinCEN
+| Financial Crimes Enforcement Network — the US Treasury bureau that collects and analyses SAR and CTR filings.
+
+| FIU-IND
+| Financial Intelligence Unit – India — the central national agency that receives STRs from Indian financial institutions.
+
+| STRO
+| Suspicious Transaction Reporting Office — Singapore's equivalent of FIU-IND.
+
+| NCA
+| National Crime Agency — the UK law enforcement body that receives SAR filings.
+
+| BSA
+| Bank Secrecy Act — the primary US AML law, enacted in 1970 and amended multiple times since.
+
+| PMLA
+| Prevention of Money Laundering Act — India's primary AML legislation, enacted in 2002.
+
+| FATF
+| Financial Action Task Force — the global intergovernmental body that sets AML/CFT standards. Its 40 Recommendations are adopted into national law by member countries.
+
+| Section 165
+| A power under the UK Financial Services and Markets Act 2000 that allows the FCA to require a firm to provide information or appoint a skilled person to carry out a review.
+
+| CNP Fraud
+| Card-Not-Present fraud — fraud involving card transactions where the physical card is not used, such as online purchases. High risk for payment fintechs.
+
+| Credential Stuffing
+| A cyberattack in which stolen username/password combinations are used in automated login attempts across multiple platforms. Often a precursor to account takeover fraud.
+
+| Beneficial Owner
+| The natural person who ultimately owns or controls a company or account, even if not the named account holder. KYC regulations require identifying beneficial owners.
+
+| First-Party Fraud
+| When a customer fraudulently disputes a transaction they actually authorised. Different from third-party fraud where the customer is a genuine victim.
+|===
+
+---
+
+== Part 8 — What You Actually Need to Know to Build SmartIntake
+
+You have read the domain. Here is a concise summary of what matters for the assignment:
+
+. *There are seven query types.* Each maps to a real compliance workflow. Your few-shot examples should reflect how real teams describe these queries — informally, with context, and not always with all fields stated.
+
+. *Urgency is always deadline-driven.* A 30-day SAR filing window, a 10-day examination response, an account blocked pending KYC — these create urgency. Casual language does not. Your system prompt must enforce this.
+
+. *Jurisdiction determines who files, where, and by when.* The `jurisdiction` field is not decorative — it determines which regulator receives the report and what the deadline is. When a query covers multiple countries, use `multi_jurisdictional` and flag it for human review.
+
+. *Tipping off is a criminal offence.* Your system must never generate output that could alert a customer to an investigation. This means no customer-facing language in confirmation messages, and no customer identifiers in logs.
+
+. *Log-safe design is a genuine constraint.* Raw messages from compliance analysts often contain account numbers, transaction IDs, and case references. None of these should appear in your output JSON or debug log.
+
+. *The five schema fields are enough.* You do not need to model the full complexity of AML compliance. Your job is to route the query to the right workflow by extracting these five fields reliably. Everything else is handled by the downstream compliance system.
+
+[NOTE]
+====
+*The bottom line for building SmartIntake:* treat every incoming query as if it were written by a compliance analyst under time pressure — informal, sometimes incomplete, sometimes urgent without saying so. Your system's job is to impose structure on that informality, ask the right follow-up questions, and never expose sensitive details in logs.
+====
+
+---
+
+_End of AML & Financial Compliance Domain Primer_ +
+_4-Week Immersive Programme — Frontier Engineering | Supporting Document_
