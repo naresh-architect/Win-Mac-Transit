@@ -1,0 +1,616 @@
+= Capstone Grading Platform — Design Document
+:author: Design Draft
+:doctype: article
+:toc: rigth
+:toclevels: 3
+:sectnums:
+:source-highlighter: highlight.js
+
+== Overview
+
+This document describes the design of a web-based application that automates
+evaluation of capstone project submissions against a fixed rubric. An
+evaluator uploads a *problem statement* (the project specification) and a
+*capstone submission* (a candidate's or team's project files); the system
+grades the submission against the rubric, produces a structured and
+narrative report, stores that report for future reference, and displays a
+chart summarizing rubric coverage.
+
+This design generalizes the SmartIntake-specific grading workflow developed
+earlier into a reusable platform: the problem statement is treated as an
+input rather than something hard-coded, so the same tool can grade capstones
+for other assignments in the future without a code change — only a new
+problem statement upload.
+
+[NOTE]
+====
+Per the current requirement, results are stored in an *in-memory database*
+for this phase, with an explicit intention to migrate to a persistent
+database later. This document is written so that migration is a storage-layer
+swap, not a redesign — see <<storage-design>>.
+====
+
+== Goals and Non-Goals
+
+=== Goals
+
+* Allow an evaluator to upload a problem statement (spec document) once and
+  reuse it across many submissions.
+* Allow an evaluator to upload a capstone submission (one or more files) and
+  associate it with a problem statement and a candidate/team name.
+* Automatically grade the submission against a rubric derived from the
+  problem statement, producing per-criterion scores, an overall score, and a
+  pass/fail verdict.
+* Persist every generated report so it can be retrieved, browsed, and
+  compared later.
+* Visualize rubric coverage for a given report as a basic chart.
+* Keep the storage layer abstracted behind an interface so today's in-memory
+  implementation can be replaced by a persistent database later without
+  touching the rest of the system.
+
+=== Non-Goals (this phase)
+
+* Multi-user authentication / access control.
+* Horizontal scaling or multi-instance deployment (the in-memory store is
+  inherently single-process).
+* Automated plagiarism/duplicate detection across submissions beyond what an
+  evaluator can already see by browsing report history (a possible future
+  enhancement, see <<future-enhancements>>).
+* Human-editable/override scoring workflow (the LLM-generated score is
+  final for this phase).
+* Long-term durability guarantees — data loss on process restart is an
+  accepted, explicit limitation of the in-memory phase.
+
+== Assumptions
+
+* Single evaluator, single browser session at a time is the primary usage
+  pattern for this phase; concurrent multi-user usage is not designed for
+  yet.
+* A "capstone submission" is a small set of text/code files (not large
+  binary artifacts); total size per submission is expected to be small
+  enough to hold comfortably in memory.
+* The rubric itself is derived from the problem statement at grading time
+  (by the grading engine, using an LLM) rather than being manually configured
+  per problem statement by the evaluator. If the evaluator instead wants a
+  fixed, manually-authored rubric per problem statement, that is a
+  straightforward variant noted in <<open-questions>>.
+* PDF export is not required for this phase; AsciiDoc, plain text, and
+  in-browser HTML rendering are sufficient.
+
+== High-Level Architecture
+
+[source,text]
+----
+                         +---------------------------+
+                         |        Web Client         |
+                         |  (Upload UI, Report View,  |
+                         |   History, Rubric Chart)   |
+                         +-------------+---------------+
+                                       | HTTPS / JSON
+                                       v
+                         +---------------------------+
+                         |      Backend API Service   |
+                         |  - Problem Statement API    |
+                         |  - Submission API           |
+                         |  - Grading orchestration     |
+                         |  - Report / Chart-data API   |
+                         +------+-------------+--------+
+                                |             |
+                 (grading job)  |             |  (persistence)
+                                v             v
+                  +----------------------+  +--------------------------+
+                  |   Grading Engine      |  |      Storage Layer       |
+                  |  (LLM-backed rubric   |  |  (Repository interface)  |
+                  |   evaluation)         |  +------------+-------------+
+                  +----------------------+               |
+                                                            v
+                                              +--------------------------+
+                                              |  In-Memory Store (v1)    |
+                                              |  -> Persistent DB (v2)   |
+                                              +--------------------------+
+----
+
+The backend is the only component that talks to the storage layer and the
+grading engine. The web client never talks to either directly, which keeps
+the future database migration and any future change of LLM provider fully
+invisible to the frontend.
+
+== Component Design
+
+=== Web Client
+
+A single-page application with four main views:
+
+* **New Evaluation** — upload a problem statement (or pick a previously
+  uploaded one) and a capstone submission, enter candidate/team name(s),
+  and submit for grading.
+* **History** — a searchable, filterable list of past evaluations (by
+  candidate name, problem statement, verdict, score range, date).
+* **Report View** — the full report for one evaluation: overall score,
+  verdict, rubric coverage chart, rubric-by-rubric breakdown, findings
+  summary, and recommendation text, plus a download action.
+* **Problem Statements** — a simple list/manager of previously uploaded
+  problem statements, so they can be reused across many submissions without
+  re-uploading.
+
+=== Backend API Service
+
+A stateless request layer responsible for:
+
+* Accepting and validating uploads (problem statements, submission files).
+* Creating and updating records via the storage layer.
+* Kicking off grading jobs and exposing their status.
+* Serving report data, including chart-ready rubric coverage data, to the
+  client.
+
+Grading is expected to take longer than a typical request/response cycle
+(it involves at least one LLM call over potentially several files), so
+grading is modeled as an asynchronous job: the "create submission" action
+returns immediately with a submission record in a `QUEUED` state, and the
+client polls (or subscribes to updates on) a status endpoint until the
+report is `COMPLETED` or `FAILED`.
+
+=== Grading Engine
+
+Encapsulates the actual evaluation logic:
+
+* Takes a problem statement and a submission's file contents as input.
+* Derives (or is given) a rubric: a set of weighted criteria to evaluate.
+* Produces a structured result: a score and short justification per
+  criterion, an aggregate score, a standardized score, and a pass/fail
+  verdict against a configurable threshold.
+* Produces a narrative report (the human-readable writeup) alongside the
+  structured result.
+* Is the only component that calls out to an LLM provider. This isolation
+  means the provider, model, and prompt strategy can all change later
+  without affecting any other component.
+
+This is the productionized version of the rubric/report logic already
+captured in the grading skill developed earlier in this project; the design
+intent is that the same rubric knowledge (criteria, weights, common failure
+patterns, report structure) backs both.
+
+=== Storage Layer [[storage-design]]
+
+Everything above talks to storage exclusively through a small set of
+repository interfaces — one per entity (see <<data-model>>) — rather than
+to a specific database technology. Each repository interface exposes the
+same shape of operation regardless of what backs it: create a record,
+fetch one by id, list/filter records, update a record's status, and
+delete a record.
+
+*Phase 1 (current requirement):* an in-memory implementation of these
+interfaces. Two reasonable options:
+
+* **Simple in-process collections** (e.g. dictionaries keyed by ID) —
+  fastest to build, but filtering/searching for the History view has to be
+  implemented by hand.
+* **An in-memory relational engine** (e.g. SQLite running in `:memory:`
+  mode) accessed through an ORM — slightly more setup, but gives filtering,
+  sorting, and pagination "for free," and — importantly for this
+  project's stated direction — the exact same schema and queries can later
+  point at a file-backed or server-based relational database with a
+  connection-string change rather than a rewrite.
+
+This document recommends the second option specifically because the
+stated intent is "I will change this to a regular database later" — see
+<<migration-path>>.
+
+*Phase 2 (future):* the same repository interfaces, backed by a persistent
+database (e.g. PostgreSQL). No component outside the storage layer needs
+to change.
+
+=== File Handling
+
+Uploaded files (problem statement documents and submission source files)
+are treated as content to store, not as something requiring a separate
+filesystem-based subsystem in this phase. File bytes and metadata (name,
+content type, size) are stored as part of the relevant record in the same
+storage layer described above. This keeps the "in-memory for now" property
+consistent across both structured data and file content, and avoids
+standing up a separate file-storage service before it's needed.
+
+A natural future step, once a persistent database is adopted, is moving
+file *content* (as opposed to metadata) to dedicated object storage,
+leaving only a reference in the database row — noted in
+<<future-enhancements>>.
+
+=== Rubric Coverage Visualization
+
+A basic chart rendered on the Report View, showing, for the report being
+viewed, each rubric criterion's earned score against its maximum possible
+score. A horizontal bar chart is recommended as the "basic graph" for this
+phase — one bar per criterion, criterion names on the axis, filled
+proportionally to points earned out of that criterion's weight. See
+<<chart-design>> for the exact data shape this requires from the backend.
+
+== Data Model [[data-model]]
+
+[cols="1,3", options="header"]
+|===
+| Entity | Purpose
+
+| Problem Statement
+| A stored specification document an evaluator uploaded, reusable across
+many submissions.
+
+| Submission
+| One candidate's or team's uploaded project files, associated with a
+problem statement.
+
+| Evaluation Report
+| The result of grading one submission: structured scores, verdict, and
+the full narrative report text.
+
+| Criterion Score
+| One rubric criterion's result within a report (name, weight, points
+earned, justification). Modeled as part of the report, not a standalone
+top-level entity.
+
+| File Artifact
+| One uploaded file's content and metadata, attached to either a Problem
+Statement or a Submission.
+|===
+
+=== Problem Statement
+
+[cols="1,3", options="header"]
+|===
+| Field | Description
+
+| id
+| Unique identifier.
+
+| title
+| Short display name, e.g. "SmartIntake — Week 1 Mini-Capstone."
+
+| version
+| Free-text or numeric version marker, in case the same assignment's spec
+changes between cohorts.
+
+| files
+| One or more attached File Artifacts making up the specification.
+
+| uploaded_at
+| Timestamp.
+|===
+
+=== Submission
+
+[cols="1,3", options="header"]
+|===
+| Field | Description
+
+| id
+| Unique identifier.
+
+| problem_statement_id
+| Reference to the Problem Statement being graded against.
+
+| candidate_name
+| Display name for the submission (an individual's name, or a team label).
+
+| team_members
+| Optional list of names, if the submission is a team submission.
+
+| files
+| One or more attached File Artifacts making up the candidate's project.
+
+| status
+| One of: `UPLOADED`, `QUEUED`, `GRADING`, `COMPLETED`, `FAILED`.
+
+| uploaded_at
+| Timestamp.
+|===
+
+=== Evaluation Report
+
+[cols="1,3", options="header"]
+|===
+| Field | Description
+
+| id
+| Unique identifier.
+
+| submission_id
+| Reference to the Submission this report evaluates.
+
+| problem_statement_id
+| Reference to the Problem Statement used (denormalized for convenient
+history browsing even if a Problem Statement is later edited).
+
+| criteria_scores
+| Ordered list of Criterion Scores (name, weight, points earned, points
+possible, justification text).
+
+| raw_score / raw_score_max
+| The sum of earned points across all assessable criteria, and the sum of
+their maximum possible points.
+
+| standardized_score
+| The raw score rescaled to a 0–100 scale.
+
+| verdict
+| `PASS` or `FAIL`.
+
+| threshold
+| The standardized-score threshold used to compute the verdict (stored per
+report so past reports remain interpretable even if the threshold is
+changed later).
+
+| narrative_report
+| The full human-readable report text (AsciiDoc source).
+
+| findings_summary
+| Ordered list of {severity, finding} pairs, mirroring the "Summary of
+Findings" section of the narrative report.
+
+| generated_at
+| Timestamp.
+|===
+
+== API Design [[api-design]]
+
+All endpoints return JSON. File uploads use multipart form submissions.
+
+[cols="1,2,3", options="header"]
+|===
+| Method & Path | Purpose | Notes
+
+| `POST /problem-statements`
+| Upload a new problem statement.
+| Accepts one or more files plus a title.
+
+| `GET /problem-statements`
+| List problem statements.
+| Supports basic filtering by title.
+
+| `GET /problem-statements/{id}`
+| Fetch one problem statement, including its files.
+|
+
+| `POST /submissions`
+| Create a submission: candidate/team name(s), a reference to a problem
+statement, and one or more files.
+| Returns immediately with status `UPLOADED`.
+
+| `POST /submissions/{id}/evaluate`
+| Kick off grading for a submission.
+| Transitions status to `QUEUED` then `GRADING`; returns a job handle.
+
+| `GET /submissions/{id}`
+| Fetch a submission's metadata and current status.
+|
+
+| `GET /submissions`
+| List submissions.
+| Supports filtering by candidate name, status, problem statement, date
+range.
+
+| `GET /reports/{id}`
+| Fetch a full evaluation report.
+| Includes structured scores and the narrative report text.
+
+| `GET /reports/{id}/chart-data`
+| Fetch rubric-coverage data shaped for charting.
+| See <<chart-design>>.
+
+| `GET /reports/{id}/export?format=adoc\|txt`
+| Download the narrative report as a file.
+|
+
+| `GET /reports`
+| List reports.
+| Supports filtering by candidate name, verdict, score range, date range —
+this backs the History view.
+|===
+
+== UI / UX Flow
+
+=== New Evaluation
+
+. Select an existing problem statement, or upload a new one.
+. Upload the candidate/team's submission files (multi-file or a single
+  archive).
+. Enter the candidate or team name(s).
+. Submit. The UI shows a progress/loading state while grading runs, then
+  navigates to the Report View once grading completes.
+
+=== History
+
+A table of past evaluations: candidate/team name, problem statement title,
+standardized score, verdict, and date, each row linking to its Report
+View. Supports basic text search and filtering by verdict and date range.
+
+=== Report View
+
+* Header: candidate/team name(s), problem statement title, date, overall
+  score shown as both the raw score and the standardized `/100` score, and
+  a clear PASS/FAIL badge.
+* Rubric coverage chart (see <<chart-design>>).
+* Expandable rubric-by-rubric breakdown, one entry per criterion, showing
+  the score and justification text.
+* Summary of Findings table, grouped/tagged by severity.
+* Recommendation text.
+* Download buttons for the report file.
+
+=== Problem Statements
+
+A simple management list: upload new, view existing, see how many
+submissions have been graded against each one.
+
+== Rubric Coverage Chart Design [[chart-design]]
+
+The chart is scoped to a single report at a time (shown on the Report
+View). Recommended shape for the "basic graph" requested:
+
+* **Type:** horizontal bar chart.
+* **One bar per rubric criterion.**
+* **Bar length:** points earned as a proportion of that criterion's
+  maximum points (i.e., percentage filled), so criteria with different
+  weights remain visually comparable.
+* **Label per bar:** criterion name, plus the raw "earned / max" points as
+  text (e.g. "17 / 20").
+* **Ordering:** rubric order (not sorted by score), so the chart reads
+  left-to-right/top-to-bottom the same way the written rubric breakdown
+  does.
+
+The backend serves this pre-shaped, so the frontend charting component
+stays a simple renderer with no scoring logic of its own:
+
+[cols="1,3", options="header"]
+|===
+| Field | Description
+
+| criterion_name
+| Display name of the criterion.
+
+| earned
+| Points earned for this criterion.
+
+| max
+| Maximum possible points for this criterion.
+
+| percentage
+| `earned / max`, pre-computed server-side for convenience.
+|===
+
+A secondary, optional widget — a single gauge or donut showing the overall
+standardized score out of 100 with the pass/fail threshold marked — is a
+natural, low-effort addition once the primary bar chart is in place, but is
+not required to satisfy "a basic graph."
+
+== In-Memory Storage Design and Migration Path [[migration-path]]
+
+=== Phase 1: In-Memory
+
+* All entities described in <<data-model>> live in memory for the life of
+  the backend process.
+* Recommended implementation: an in-memory relational engine (see
+  <<storage-design>>) accessed only through the repository interfaces —
+  never directly by the API layer.
+* Explicit, accepted limitations of this phase:
+** All data is lost on process restart.
+** No support for multiple backend instances sharing state (a single
+   process is the unit of storage).
+** Total capacity is bounded by available memory; acceptable given the
+   expected file sizes and volumes for this use case.
+
+=== Phase 2: Persistent Database
+
+* The same repository interfaces are re-implemented against a persistent
+  relational database.
+* If Phase 1 used an in-memory relational engine with the same schema, this
+  migration is primarily a configuration change (pointing the same
+  schema/queries at a durable database) rather than a rewrite of query
+  logic.
+* Schema migration tooling should be introduced at this point to manage
+  future schema changes safely.
+* File content storage can optionally move from "stored in the database
+  row" to dedicated object storage at this same time, with the database
+  retaining only a reference — see <<future-enhancements>>.
+
+=== What Does Not Change Across the Migration
+
+* The API contract described in <<api-design>>.
+* The Grading Engine.
+* The Web Client.
+* The repository *interfaces* — only their concrete implementation swaps.
+
+== Non-Functional Considerations
+
+[cols="1,3", options="header"]
+|===
+| Concern | Approach for this phase
+
+| Security
+| Validate uploaded file types and sizes; treat uploaded content as
+untrusted when rendering it anywhere in the UI. No authentication in this
+phase — see <<open-questions>>.
+
+| Scalability
+| Not a design goal yet; single-process, single-evaluator usage is
+assumed. Explicitly revisit once a persistent database is in place.
+
+| Reliability / data loss
+| Accepted risk for this phase: a backend restart clears all stored
+reports. A lightweight mitigation worth considering even before Phase 2 is
+a manual "export all reports to a file" action, purely as a safety net.
+
+| Observability
+| Log grading requests, durations, and outcomes (success/failure), plus
+LLM token usage per evaluation for cost tracking.
+
+| Cost
+| Each evaluation performs at least one LLM call; token usage should be
+logged per report so cumulative cost is visible over time.
+|===
+
+== Technology Stack Recommendation
+
+This is a recommendation, not a fixed decision — it's offered as a
+reasonable, low-friction default given the design above.
+
+[cols="1,2", options="header"]
+|===
+| Layer | Recommendation
+
+| Backend
+| A Python web framework, for natural reuse of the existing Pydantic-based
+rubric/grading logic and the Anthropic SDK.
+
+| Storage (Phase 1)
+| An in-memory relational engine accessed through an ORM, specifically so
+the schema and queries can be pointed at a persistent relational database
+later with minimal change.
+
+| Storage (Phase 2)
+| A server-based relational database, using the same ORM/schema as
+Phase 1.
+
+| Frontend
+| A component-based single-page framework with a lightweight charting
+library for the rubric coverage chart, and an AsciiDoc-to-HTML renderer so
+stored reports display cleanly in-browser without a server-side
+conversion step.
+
+| Async job handling
+| A simple in-process background task mechanism is sufficient at expected
+volumes for this phase; a dedicated task queue is a Phase 2+
+consideration if volume grows.
+|===
+
+== Open Questions [[open-questions]]
+
+* Is single-evaluator, no-authentication usage acceptable indefinitely, or
+  should multi-user access be planned for soon?
+* Should the rubric be fixed and manually authored per problem statement,
+  rather than derived automatically by the grading engine each time? (This
+  would add a "rubric" as its own stored entity, versioned alongside the
+  problem statement.)
+* Is a "re-grade" action needed — e.g., if the rubric or problem statement
+  is corrected after a report already exists?
+* Is PDF export needed, or is AsciiDoc/plain-text/in-browser-HTML
+  sufficient for this phase?
+* What submission volume is expected (submissions per day/week)? This
+  affects how soon async job handling needs to move beyond a simple
+  in-process approach.
+
+== Future Enhancements [[future-enhancements]]
+
+* Persistent database (Phase 2, already designed for above).
+* Object storage for uploaded file content, once file sizes or retention
+  requirements grow.
+* Authentication and multi-user support.
+* A comparison view for two or more reports side by side.
+* Cohort-level analytics (e.g., average score and pass rate across all
+  submissions against one problem statement, trended over time).
+* Automated duplicate/team-submission detection when a new submission is
+  uploaded, by comparing file content against existing submissions for the
+  same problem statement.
+* A manual "export all data to file" safety-net action, ahead of full
+  Phase 2 migration.
+
+---
+
+_End of design document._
