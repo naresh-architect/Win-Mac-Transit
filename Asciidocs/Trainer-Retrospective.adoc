@@ -1,0 +1,139 @@
+= Trainer Retrospective — Best Practice Capture Template
+6-Week Immersive Programme — Frontier Engineering
+:toc: right
+:toclevels: 2
+
+== Instructions
+
+NOTE: Fill this out at the end of each week you facilitate — whether you led a technical session (Weeks 2–6) or a behavioral/professional session (Week 1, or the behavioral case studies embedded in later weeks). One copy per trainer, per week. Plain language is fine — this is not a formal report, it's how we make Week 3 better than Week 2.
+
+* Be specific. "The RAG lab ran long" is more useful than "timing was off."
+* Include what went *right*, not just problems — we need to know what to repeat, not only what to fix.
+* If you're not sure whether something is worth mentioning, mention it anyway.
+* Submit within 24 hours of the session ending, while it's still fresh.
+
+---
+
+== 1. Session Details
+
+[cols="1,3", options="header"]
+|===
+| Field | Your Entry
+| Trainer name |
+| Trainer type | ( Technical / Behavioral / Both )
+| Week covered | ( Week 1 / Week 2 / Week 3 / Week 4 / Week 5 / Week 6 )
+| Specific topic or capstone facilitated |
+| Date(s) of session |
+| Cohort / batch name |
+| Number of learners |
+|===
+
+---
+
+== 2. What Went Right
+
+_What worked well enough that we should deliberately repeat it next cohort? Think: explanations that clicked, exercises that landed, pacing that worked, tools/analogies that helped, moments of strong engagement._
+
+[cols="1,3", options="header"]
+|===
+| # | What Went Right — Be Specific
+
+| 1
+|
+
+| 2
+|
+
+| 3
+|
+|===
+
+---
+
+== 3. What Went Wrong
+
+_Friction points, confusion, timing issues, technical/environment problems, engagement drops, mismatched expectations — anything that got in the way._
+
+[cols="1,3,2,2", options="header"]
+|===
+| # | Issue | Impact on Learners | Priority (High / Medium / Low)
+
+| 1
+|
+|
+|
+
+| 2
+|
+|
+|
+
+| 3
+|
+|
+|
+|===
+
+---
+
+== 4. Why It Happened (Root Cause, If Known)
+
+_Optional, but valuable. A timing problem might be "the lab was underscoped for 5 days," not just "we ran out of time." A confusion point might be "the prerequisite from Week 2 wasn't actually solid," not just "learners were lost."_
+
+
+
+---
+
+== 5. Suggested Improvements for Next Cohort
+
+_Concrete, actionable changes — not just "make it better." If you're proposing a change to content, timing, sequencing, an exercise, or the behavioral case study for this week, say so directly._
+
+[cols="1,3", options="header"]
+|===
+| # | Suggested Change
+
+| 1
+|
+
+| 2
+|
+
+| 3
+|
+|===
+
+---
+
+== 6. Learner Engagement & Reception Notes
+
+_General sense of the room: energy level, questions asked, who struggled, who excelled, any pattern worth flagging (e.g. "everyone from a non-Python background struggled at the same point")._
+
+
+
+---
+
+== 7. Reusable Assets Worth Keeping
+
+_Did you create or adapt anything this week worth reusing — a slide, an analogy, a debugging exercise, a way of explaining a tricky concept, a modified case study? Note it here so it doesn't get lost._
+
+
+
+---
+
+== 8. Anything Else
+
+_Anything that didn't fit above — logistics, tooling, facilitator support, cross-week dependencies, behavioral/technical integration notes, etc._
+
+
+
+---
+
+== Submission
+
+[cols="1,3", options="header"]
+|===
+| Field | Your Entry
+| Submitted by |
+| Date submitted |
+| Reviewed by (programme lead) |
+|===

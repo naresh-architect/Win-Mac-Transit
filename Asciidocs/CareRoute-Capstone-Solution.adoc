@@ -1,0 +1,710 @@
+= CareRoute — Solution Design Document
+:toc: right
+:toclevels: 3
+:sectnums:
+
+== Purpose of This Document
+
+This document specifies a reference solution design for *CareRoute*, the
+multi-agent healthcare triage and appointment coordination system
+described in the CareRoute Capstone Specification. It is intended as a
+detailed architectural blueprint — data model, agent contracts,
+orchestration logic, and the hard-escalation gate design — that a team
+could implement against directly, and that facilitators can use as a
+model answer when evaluating student submissions.
+
+This is a *design* document, not diagnostic or clinical guidance. All
+patient, doctor, and clinic data referenced below is fictional
+(CareWell Health Network) and exists solely to exercise the pipeline.
+
+---
+
+== 1. System Overview
+
+=== 1.1 Goal
+
+Given a raw patient enquiry (text, optionally with an image attachment),
+CareRoute must produce exactly one of three outcomes:
+
+. An **appointment confirmation / coverage-guidance closure report**
+  (routine, resolved cases)
+. An **escalation brief** for a human nurse or doctor (mandatory
+  category escalation, or standard rule-based escalation)
+. A **clarification request** back to the patient (ambiguous input that
+  cannot be safely classified either way)
+
+It must never produce a medical diagnosis, and it must never allow a
+case flagged under a mandatory escalation category to reach outcome (1).
+
+=== 1.2 High-Level Architecture
+
+[source]
+----
+                         ┌─────────────────────┐
+   Patient Enquiry ───▶  │   Orchestrator       │
+   (text + optional      │  (fixed-sequence OR  │
+    image)                │   dynamic routing)   │
+                         └──────────┬───────────┘
+                                    │
+                 ┌──────────────────┼──────────────────┐
+                 ▼                  ▼                  ▼
+          ┌─────────────┐   ┌──────────────┐   ┌──────────────────┐
+          │ TriageAgent │──▶│ Hard-Escalation│   │  (bypass path)   │
+          │             │   │     Gate       │   │  if gate fires,  │
+          └─────────────┘   └──────┬─────────┘   │  skip straight   │
+                                    │ CLEAR       │  to Coordinator  │
+                                    ▼             └────────┬─────────┘
+                          ┌──────────────────┐             │
+                          │ AvailabilityAgent│             │
+                          └────────┬─────────┘             │
+                                   ▼                        │
+                          ┌──────────────────┐             │
+                          │  CoverageAgent    │             │
+                          └────────┬─────────┘             │
+                                   ▼                        │
+                          ┌──────────────────┐             │
+                          │  ResponseAgent    │◀───┐        │
+                          └────────┬─────────┘    │REVISE   │
+                                   ▼                │        │
+                          ┌──────────────────┐     │        │
+                          │  SafetyQAAgent    │─────┘        │
+                          └────────┬─────────┘  (max 2 loops)│
+                                   │ PASS                    │
+                                   ▼                          ▼
+                          ┌────────────────────────────────────┐
+                          │        CareCoordinatorAgent          │
+                          │  routes to: closure report   OR      │
+                          │             escalation brief         │
+                          └────────────────────────────────────┘
+----
+
+=== 1.3 Design Principles
+
+* **Fail closed, not open.** Any uncertainty in urgency, specialty, or
+  category classification biases toward escalation, never toward
+  auto-resolution.
+* **The hard-escalation gate is not part of the LLM decision chain.**
+  It is evaluated as a discrete step with its own pass/fail output that
+  no downstream agent can override. It runs twice — once in
+  `TriageAgent`, once independently in `SafetyQAAgent` — so that a
+  single point of failure cannot let an urgent case through.
+* **Agents are single-purpose and stateless between calls.** All state
+  lives in the shared case object, not in agent memory, so any run can
+  be replayed from a saved JSON snapshot.
+* **Every patient-facing artifact is templated, not freely generated.**
+  `ResponseAgent` composes from `patient_communication_templates.md`
+  rather than writing open-ended prose, which is what makes
+  `SafetyQAAgent`'s compliance check tractable.
+
+---
+
+== 2. Technology Stack
+
+[cols="1,3", options="header"]
+|===
+| Layer | Choice and Rationale
+
+| Agent framework
+| **AutoGen** (`AssistantAgent` / `UserProxyAgent`). Chosen over CrewAI
+  for this reference design because AutoGen's `SelectorGroupChat`
+  maps cleanly onto the dynamic-routing requirement for ambiguous and
+  hard-escalation cases, and its message-based state passing is easy
+  to snapshot to JSON. A CrewAI implementation is equally valid — see
+  <<8-orchestration-design>> for the equivalent Flow-based design.
+
+| Orchestration
+| `RoundRobinGroupChat` for fixed-sequence scenarios (routine
+  appointment, insurance boundary). `SelectorGroupChat` with a
+  selector function for dynamic routing (ambiguous symptom, hard
+  escalation, follow-up).
+
+| LLM
+| Any tool-calling-capable chat model, invoked per agent with a
+  distinct system prompt and a restricted tool set.
+
+| Structured data
+| MySQL, accessed exclusively through `mysql_mcp_server`. No agent
+  connects to the database directly.
+
+| Knowledge base
+| Flat Markdown files, accessed through the filesystem MCP server.
+  Retrieval is simple top-k section matching — this is a Level 2
+  capstone, not a vector-DB exercise, though teams may substitute a
+  lightweight embedding index if they wish.
+
+| State persistence
+| One JSON file per case, written after every agent handoff, keyed by
+  `enquiry_id`.
+
+| Observability
+| A single structured JSONL log (`observability_log.jsonl`), one line
+  per agent invocation.
+|===
+
+---
+
+== 3. Data Model
+
+=== 3.1 Schema (MySQL DDL)
+
+[source,sql]
+----
+CREATE TABLE patients (
+    patient_id       VARCHAR(12) PRIMARY KEY,
+    name             VARCHAR(120) NOT NULL,
+    date_of_birth    DATE NOT NULL,
+    city             VARCHAR(80),
+    insurance_plan_id VARCHAR(12),
+    registration_date DATE NOT NULL,
+    prior_visit_count INT DEFAULT 0,
+    FOREIGN KEY (insurance_plan_id) REFERENCES insurance_plans(plan_id)
+);
+
+CREATE TABLE doctors (
+    doctor_id        VARCHAR(12) PRIMARY KEY,
+    name             VARCHAR(120) NOT NULL,
+    specialty        VARCHAR(60) NOT NULL,
+    clinic_location  VARCHAR(120),
+    weekly_availability JSON  -- e.g. {"Mon": ["09:00-12:00"], "Wed": [...]}
+);
+
+CREATE TABLE insurance_plans (
+    plan_id          VARCHAR(12) PRIMARY KEY,
+    insurer_name      VARCHAR(120) NOT NULL,
+    plan_tier        ENUM('Basic','Standard','Premium') NOT NULL,
+    covered_specialties JSON,
+    copay_structure   JSON
+);
+
+CREATE TABLE preauth_rules (
+    rule_id          INT AUTO_INCREMENT PRIMARY KEY,
+    specialty_or_procedure VARCHAR(120) NOT NULL,
+    plan_tier        ENUM('Basic','Standard','Premium') NOT NULL,
+    preauth_required  BOOLEAN NOT NULL,
+    documentation_needed TEXT,
+    typical_turnaround_hours INT
+);
+
+CREATE TABLE enquiries (
+    enquiry_id       VARCHAR(16) PRIMARY KEY,
+    patient_id       VARCHAR(12) NOT NULL,
+    enquiry_date     DATETIME NOT NULL,
+    raw_text         TEXT NOT NULL,
+    triage_outcome   JSON,               -- snapshot of TriageAgent output
+    status           ENUM('open','routine_resolved','escalated','clarification_requested') DEFAULT 'open',
+    handling_agent_or_clinician_id VARCHAR(12),
+    FOREIGN KEY (patient_id) REFERENCES patients(patient_id)
+);
+
+CREATE TABLE appointments (
+    appointment_id   VARCHAR(16) PRIMARY KEY,
+    patient_id       VARCHAR(12) NOT NULL,
+    doctor_id        VARCHAR(12) NOT NULL,
+    specialty        VARCHAR(60) NOT NULL,
+    scheduled_at     DATETIME,
+    status           ENUM('booked','completed','cancelled','no_show') DEFAULT 'booked',
+    originating_enquiry_id VARCHAR(16),
+    FOREIGN KEY (patient_id) REFERENCES patients(patient_id),
+    FOREIGN KEY (doctor_id) REFERENCES doctors(doctor_id),
+    FOREIGN KEY (originating_enquiry_id) REFERENCES enquiries(enquiry_id)
+);
+
+CREATE TABLE escalation_categories (
+    category_id       VARCHAR(20) PRIMARY KEY,
+    category_name     VARCHAR(120) NOT NULL,
+    mandatory_escalation BOOLEAN NOT NULL DEFAULT TRUE,
+    rationale         TEXT NOT NULL,
+    example_phrasings  JSON,   -- list of canonical + paraphrased examples
+    last_reviewed_by   VARCHAR(120)  -- clinical owner, not an engineer
+);
+----
+
+=== 3.2 Notes on `escalation_categories`
+
+This table is **clinician-owned data**, not model-tunable
+configuration. `last_reviewed_by` exists to make explicit in the schema
+that changes to what counts as a mandatory-escalation category are a
+clinical governance decision, not an engineering one. The application
+layer should treat this table as read-only at runtime.
+
+=== 3.3 Knowledge Base File Layout
+
+[source]
+----
+knowledge_base/
+├── specialty_referral_guidelines.md
+├── insurance_preauth_policy.md
+├── appointment_scheduling_policy.md
+├── always_escalate_categories.md      # mirrors escalation_categories table content,
+│                                       # human-readable + example phrasings
+└── patient_communication_templates.md # approved response templates + disclaimers
+----
+
+`always_escalate_categories.md` and the `escalation_categories` table
+must be kept in sync (ideally the Markdown file is generated from the
+table, not maintained separately, to avoid drift).
+
+---
+
+== 4. Agent Specifications
+
+Each agent is defined by: role, tools, input contract, output contract,
+and system prompt intent. Full verbatim system prompts belong in the
+architecture document; this section specifies the contract each prompt
+must satisfy.
+
+=== 4.1 TriageAgent
+
+[cols="1,3"]
+|===
+| Tools | None (pure LLM reasoning over enquiry text + `always_escalate_categories.md`, loaded once at startup, not re-fetched per call)
+| Input | `{ enquiry_id, patient_id_hint, raw_text, image_description? }`
+| Output | see below
+|===
+
+[source,json]
+----
+{
+  "enquiry_id": "ENQ-10234",
+  "patient_id": "PT-00981",
+  "likely_specialty": "cardiology",
+  "urgency": "medium",
+  "confidence": 0.71,
+  "hard_escalation": true,
+  "hard_escalation_category": "chest_pain",
+  "hard_escalation_matched_phrase": "tightness in my chest after walking up the stairs",
+  "clarification_needed": false,
+  "notes": "Symptom phrased casually but matches chest-pain escalation category."
+}
+----
+
+Design requirement: `hard_escalation` and `confidence` are **separate
+fields produced by separate reasoning steps**, not derived from each
+other. The prompt must instruct the model to run the escalation-category
+check first, against the literal content of `always_escalate_categories.md`,
+before — and independently of — forming its urgency/confidence judgment.
+See <<7-hard-escalation-gate-design>> for the full detection design.
+
+=== 4.2 AvailabilityAgent
+
+[cols="1,3"]
+|===
+| Tools | `mysql_mcp_server` (read-only queries against `doctors`, `appointments`, `enquiries`, `patients`)
+| Input | `TriageAgent` output object
+| Output | see below
+|===
+
+[source,json]
+----
+{
+  "enquiry_id": "ENQ-10234",
+  "patient_history": {
+    "prior_visit_count": 3,
+    "prior_open_enquiries": []
+  },
+  "available_slots": [
+    { "doctor_id": "DOC-118", "specialty": "cardiology", "slot": "2026-09-22T10:00:00" }
+  ],
+  "no_availability_within_sla": false
+}
+----
+
+Query pattern:
+
+[source,sql]
+----
+SELECT appointment_id, scheduled_at, status
+FROM appointments
+WHERE patient_id = :patient_id
+ORDER BY scheduled_at DESC;
+
+SELECT enquiry_id, status, enquiry_date
+FROM enquiries
+WHERE patient_id = :patient_id AND status = 'open'
+  AND enquiry_id != :current_enquiry_id;
+
+SELECT doctor_id, weekly_availability
+FROM doctors
+WHERE specialty = :likely_specialty;
+----
+
+If `hard_escalation` is true in the input, `AvailabilityAgent` should
+still run (a human clinician benefits from seeing availability in the
+escalation brief) but must not attempt to auto-book anything.
+
+=== 4.3 CoverageAgent
+
+[cols="1,3"]
+|===
+| Tools | `mysql_mcp_server` (`preauth_rules`, `insurance_plans`), filesystem MCP (`insurance_preauth_policy.md`, `specialty_referral_guidelines.md`)
+| Input | `TriageAgent` output + patient's `insurance_plan_id`
+| Output | see below
+|===
+
+[source,json]
+----
+{
+  "enquiry_id": "ENQ-10234",
+  "preauth_required": true,
+  "documentation_needed": ["referral letter", "prior ECG report"],
+  "typical_turnaround_hours": 48,
+  "source_citations": [
+    "insurance_preauth_policy.md#cardiology-standard-tier",
+    "preauth_rules row id 42"
+  ]
+}
+----
+
+=== 4.4 ResponseAgent
+
+[cols="1,3"]
+|===
+| Tools | filesystem MCP (`patient_communication_templates.md`) — read-only, no write access
+| Input | Triage + Availability + Coverage context, plus QA comments on revise loops
+| Output | Draft response text, plus a machine-checkable `disclaimer_included: true/false` field
+|===
+
+Design requirement: `ResponseAgent` must be prompted to select and fill
+an approved template rather than free-write. This constrains the
+surface area `SafetyQAAgent` needs to check and makes "did it include
+the required disclaimer" a near-deterministic check rather than a
+judgment call.
+
+`ResponseAgent` must never be invoked at all when `hard_escalation` is
+`true` — this is enforced at the orchestration layer (see
+<<8-orchestration-design>>), not left to the agent's own judgment to
+decline.
+
+=== 4.5 SafetyQAAgent
+
+[cols="1,3"]
+|===
+| Tools | None (reviews text + structured context already gathered)
+| Input | Draft response + full upstream context, including `hard_escalation` flag
+| Output | see below
+|===
+
+[source,json]
+----
+{
+  "enquiry_id": "ENQ-10234",
+  "result": "REVISE",
+  "comments": [
+    "Missing required 'this is not a diagnosis' disclaimer.",
+    "States pre-authorisation is automatic; preauth_required is true per CoverageAgent."
+  ],
+  "hard_escalation_reverified": true,
+  "route_override": "escalate"
+}
+----
+
+`SafetyQAAgent` performs three checks every time, in this order:
+
+. **Re-verify `hard_escalation`.** Independently re-read the original
+  enquiry text against `always_escalate_categories.md` — do not simply
+  trust the flag passed down from `TriageAgent`. If this check disagrees
+  with `TriageAgent` in the direction of "should have escalated," it
+  wins. This is the second half of the two-layer gate.
+. **Policy accuracy.** Does the draft match `CoverageAgent`'s and
+  `AvailabilityAgent`'s actual findings?
+. **Tone and disclaimer compliance.** Does the draft match
+  `patient_communication_templates.md` verbatim structure, and does it
+  include the mandatory disclaimer?
+
+A `PASS` is only valid if all three checks pass **and**
+`hard_escalation_reverified` is `false`. If `hard_escalation_reverified`
+is `true`, the result must be `REVISE` with `route_override: "escalate"`
+regardless of the other two checks — `ResponseAgent` is not re-invoked
+in this case; the case goes straight to `CareCoordinatorAgent`.
+
+=== 4.6 CareCoordinatorAgent
+
+[cols="1,3"]
+|===
+| Tools | `mysql_mcp_server` (write access to `enquiries.status`, `appointments`)
+| Input | Full case context + `SafetyQAAgent` result
+| Output | Closure report OR escalation brief (see <<9-output-artifacts>>)
+|===
+
+Routing logic (deterministic, not LLM-judged):
+
+[source,python]
+----
+def route(case):
+    if case.hard_escalation or case.safety_qa.route_override == "escalate":
+        return escalate(case, reason="mandatory_category")
+    if case.availability.no_availability_within_sla:
+        return escalate(case, reason="sla_breach")
+    if case.coverage.preauth_required and not case.coverage.documentation_provided:
+        return close_with_guidance(case)  # not an escalation — a documentation request
+    if case.safety_qa.result != "PASS":
+        return escalate(case, reason="qa_exhausted")  # after 2 revise loops
+    return close_resolved(case)
+----
+
+---
+
+[[7-hard-escalation-gate-design]]
+== 5. Hard-Escalation Gate Design
+
+This is the component evaluators will stress-test most heavily, and the
+one place in the system where a purely prompt-based approach is
+insufficient on its own.
+
+=== 5.1 Two-Layer Detection
+
+*Layer 1 — Lexical/semantic pre-filter (deterministic, runs before TriageAgent's LLM call).*
+A lightweight check — keyword/phrase matching plus a small
+sentence-embedding similarity check against the canonical and
+paraphrased example phrasings stored in `escalation_categories.example_phrasings`
+— flags candidate matches. This layer is intentionally permissive (high
+recall, tolerant of false positives): its job is to make sure nothing
+obviously in-category is missed before the LLM ever gets a chance to be
+talked out of it by surrounding routine-sounding context.
+
+*Layer 2 — LLM re-check inside `TriageAgent` and independently inside `SafetyQAAgent`.*
+The LLM receives the full `always_escalate_categories.md` content
+(including the paraphrase examples) and the raw enquiry text, and is
+asked a single yes/no question per category: "Does this enquiry
+describe, in any form, a symptom matching this category — regardless of
+how the rest of the sentence is phrased?" This is deliberately scoped
+narrower than the general triage prompt so that it cannot be diluted by
+the model's broader reasoning about urgency or routine framing.
+
+=== 5.2 Combination Rule
+
+[source,python]
+----
+def hard_escalation_check(enquiry_text, categories):
+    layer1_hits = lexical_semantic_prefilter(enquiry_text, categories)
+    layer2_hits = llm_category_check(enquiry_text, categories)  # independent call
+    # Union, not intersection: either layer firing is sufficient.
+    return bool(layer1_hits | layer2_hits)
+----
+
+The two layers are combined with a logical OR, not AND. A design that
+requires both layers to agree before escalating reintroduces exactly
+the failure mode the gate exists to prevent — one layer's blind spot
+masked by the other's agreement.
+
+=== 5.3 Why This Survives Rephrasing Attempts
+
+The scenario `"I've just been feeling a bit of tightness in my chest
+after walking up the stairs, probably nothing, just wanted to ask
+before I book a routine check-up"` is designed to test exactly this:
+the surrounding language ("probably nothing," "routine check-up") is
+there to pull a purely holistic LLM judgment toward a low-urgency
+classification. Because Layer 2's category check is asked as an
+isolated yes/no question about symptom content — not blended into the
+same reasoning pass that produces the urgency/confidence score — the
+minimising language around it has no path to suppress the match. Layer
+1 provides a second, non-LLM backstop against the same failure mode.
+
+=== 5.4 Testing Requirement
+
+Teams must maintain a test file (e.g. `tests/hard_escalation_variants.json`)
+containing, at minimum, three paraphrased variants per mandatory
+category, and run it as a regression suite on every change to
+`TriageAgent`, `SafetyQAAgent`, or `always_escalate_categories.md`.
+
+---
+
+== 6. Explicit State Handoff Schema
+
+Every agent reads and writes to a single growing `case` object,
+persisted to `state/{enquiry_id}.json` after each step.
+
+[source,json]
+----
+{
+  "enquiry_id": "ENQ-10234",
+  "status_signal": "TRIAGE_COMPLETE",
+  "triage": { "...": "TriageAgent output" },
+  "availability": { "...": "AvailabilityAgent output" },
+  "coverage": { "...": "CoverageAgent output" },
+  "draft_response": { "text": "...", "revision_count": 0 },
+  "safety_qa": { "...": "SafetyQAAgent output" },
+  "final_outcome": null,
+  "audit_trail": [
+    { "agent": "TriageAgent", "timestamp": "...", "status_signal": "TRIAGE_COMPLETE" }
+  ]
+}
+----
+
+Status signals used as handoff triggers: `TRIAGE_COMPLETE`,
+`HARD_ESCALATION_TRIGGERED`, `AVAILABILITY_RESOLVED`, `COVERAGE_RESOLVED`,
+`DRAFT_READY`, `QA_REVISE`, `QA_PASSED`, `CASE_CLOSED`, `CASE_ESCALATED`.
+
+`HARD_ESCALATION_TRIGGERED` is a terminal-for-response-generation
+signal: the orchestrator must treat its presence as an unconditional
+skip of `ResponseAgent` and a direct route to `CareCoordinatorAgent`.
+
+---
+
+[[8-orchestration-design]]
+== 7. Orchestration Design
+
+=== 7.1 Fixed-Sequence Path (routine appointment, insurance boundary scenarios)
+
+`TriageAgent → AvailabilityAgent → CoverageAgent → ResponseAgent → SafetyQAAgent → CareCoordinatorAgent`,
+implemented as `RoundRobinGroupChat` (AutoGen) or a CrewAI sequential
+`Crew`. The QA revise loop is a bounded sub-loop between `ResponseAgent`
+and `SafetyQAAgent`, capped at 2 iterations before forcing
+`CareCoordinatorAgent` with `reason="qa_exhausted"`.
+
+=== 7.2 Dynamic Routing Path (ambiguous, hard-escalation, follow-up scenarios)
+
+Implemented as `SelectorGroupChat` (AutoGen) with a custom selector
+function, or a CrewAI `Flow` with conditional edges:
+
+[source,python]
+----
+def select_next_agent(case):
+    if case.status_signal == "TRIAGE_COMPLETE" and case.triage.hard_escalation:
+        return "CareCoordinatorAgent"          # skip straight through
+    if case.status_signal == "TRIAGE_COMPLETE" and case.triage.clarification_needed:
+        return "ClarificationRequestHandler"   # returns to patient, does not proceed
+    if case.status_signal == "TRIAGE_COMPLETE":
+        return "AvailabilityAgent"
+    if case.status_signal == "AVAILABILITY_RESOLVED":
+        return "CoverageAgent"
+    if case.status_signal == "COVERAGE_RESOLVED":
+        return "ResponseAgent"
+    if case.status_signal == "DRAFT_READY":
+        return "SafetyQAAgent"
+    if case.status_signal == "QA_REVISE" and case.draft_response.revision_count < 2:
+        return "ResponseAgent"
+    return "CareCoordinatorAgent"
+----
+
+The critical property: the selector function itself — not any agent's
+LLM output — enforces the hard-escalation bypass. Even if
+`TriageAgent`'s own text commentary were ambiguous or hedged, the
+structured `hard_escalation` boolean field is what the selector reads.
+
+---
+
+[[9-output-artifacts]]
+== 8. Output Artifacts
+
+=== 8.1 Closure Report (Markdown + JSON)
+
+[source,markdown]
+----
+## Case Closure — ENQ-10234
+**Patient:** PT-00981 | **Specialty:** Cardiology | **Status:** Resolved
+
+**Outcome:** Appointment booked with Dr. [Name], 2026-09-22 10:00.
+**Coverage:** Pre-authorisation required — documentation requested from patient.
+**Disclaimer included:** Yes
+
+_This communication does not constitute a medical diagnosis._
+----
+
+=== 8.2 Escalation Brief (Markdown + JSON)
+
+[source,markdown]
+----
+## ESCALATION — ENQ-10234
+**Reason:** mandatory_category — chest_pain
+**Matched phrase:** "tightness in my chest after walking up the stairs"
+**Urgency (model estimate, informational only):** medium
+**Patient:** PT-00981, prior visits: 3, no open prior enquiries
+**Recommended next step:** Immediate clinician review — NOT auto-routed to scheduling.
+**Full case context attached:** triage.json, availability.json, coverage.json
+----
+
+The escalation brief deliberately surfaces the model's own urgency
+estimate as "informational only" — a human reviewer should never infer
+that a "medium" urgency label means the escalation is a formality.
+
+---
+
+== 9. Observability Design
+
+One JSONL line per agent invocation:
+
+[source,json]
+----
+{"enquiry_id":"ENQ-10234","agent":"TriageAgent","timestamp":"2026-09-17T10:02:11Z",
+ "input_tokens":412,"output_tokens":180,"latency_ms":890,"estimated_cost_usd":0.0031,
+ "status_signal_emitted":"TRIAGE_COMPLETE","hard_escalation":true}
+----
+
+Per-run summary computed at `CASE_CLOSED` / `CASE_ESCALATED`: total
+tokens, total latency, total cost, number of QA revise loops, whether
+hard escalation fired, whether it fired on Layer 1, Layer 2, or both.
+
+---
+
+== 10. Failure Modes and Mitigations
+
+[cols="2,3", options="header"]
+|===
+| Failure Mode | Mitigation
+
+| Hard-escalation gate misses a novel paraphrase
+| Layer 1 lexical/semantic backstop; regression suite grown over time
+  as new variants are discovered; fail-closed default (see below)
+
+| `TriageAgent` cannot determine patient ID from text
+| `AvailabilityAgent` and `CoverageAgent` return `insufficient_context`
+  rather than guessing; orchestrator routes to clarification request
+
+| QA loop oscillates without converging
+| Hard cap at 2 revisions; third failure forces escalation with
+  `reason="qa_exhausted"`, never a third silent retry
+
+| MCP server unavailable (DB or filesystem)
+| Orchestrator treats tool failure as a hard stop for that case, not a
+  skipped step — case is flagged `status: "tool_error"` and routed to
+  escalation, not silently completed with partial data
+
+| Ambiguous case incorrectly escalated (false positive)
+| Acceptable failure direction by design — costs a human review, not
+  patient safety. Not tuned away.
+|===
+
+The system's default posture, wherever a step cannot complete with full
+confidence in its own correctness, is escalation or clarification — never
+silent auto-resolution.
+
+---
+
+== 11. Repository Structure
+
+[source]
+----
+careroute/
+├── README.md
+├── agents/
+│   ├── factory.py                  # AgentFactory — all instantiation logic
+│   ├── triage_agent.py
+│   ├── availability_agent.py
+│   ├── coverage_agent.py
+│   ├── response_agent.py
+│   ├── safety_qa_agent.py
+│   └── care_coordinator_agent.py
+├── orchestration/
+│   ├── fixed_sequence.py
+│   └── dynamic_router.py
+├── escalation/
+│   ├── lexical_semantic_prefilter.py
+│   └── category_definitions_loader.py
+├── mcp_clients/
+│   ├── mysql_client.py
+│   └── filesystem_client.py
+├── knowledge_base/                 # see section 3.3
+├── db/
+│   ├── schema.sql
+│   └── seed_data.sql
+├── state/                          # per-enquiry JSON snapshots
+├── logs/
+│   └── observability_log.jsonl
+├── tests/
+│   ├── scenarios/                  # the 5 required scenario fixtures
+│   └── hard_escalation_variants.json
+└── outputs/
+    ├── closure_reports/
+    └── escalation_briefs/
+----

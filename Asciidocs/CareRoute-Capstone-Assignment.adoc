@@ -1,0 +1,639 @@
+= Capstone Project - CareRoute
+:toc: right
+
+== Capstone Project: CareRoute — An Autonomous Multi-Agent Healthcare Triage & Appointment Coordination System
+
+=== Project Overview
+
+CareRoute is an autonomous multi-agent system that mirrors a real-world
+multi-specialty clinic network's front-desk and triage operation. Given
+an incoming patient enquiry as input — a symptom description, an
+appointment request, or a question about insurance coverage for a
+procedure — the system must independently assess urgency and likely
+specialty need, check doctor availability, verify insurance
+pre-authorisation rules, draft a response or next-step recommendation,
+and hand off to a human nurse or doctor before any patient-facing action
+is taken whenever the enquiry falls outside routine, low-risk territory.
+
+This capstone requires teams to make real architectural decisions across
+every topic covered in the Agentic AI module: agent design, orchestration
+strategy, tool integration via MCP, multi-agent communication, state and
+memory management, and observability — with one additional constraint
+that does not appear in the SupportPilot track: escalation in CareRoute
+cannot be purely confidence-driven. A fixed set of symptom categories
+must escalate to a human *every time*, independent of how confident the
+model is in its own triage assessment. Building, and stress-testing, that
+hard guardrail is the central engineering challenge of this capstone.
+
+[cols="1,2"]
+|===
+| Duration          | 2–3 days
+| Team size         | 2–3 learners
+| Domain            | Healthcare appointment & triage coordination
+| Deliverables      | Working system + architecture document + 15-minute demo and debrief
+| Proficiency level | Level 2 — Working Knowledge
+|===
+
+---
+
+=== The Problem Statement
+
+*CareWell Health Network* is a fictional multi-specialty clinic network
+fielding a high volume of patient enquiries daily. Front-desk and triage
+staff manually read each enquiry, judge its urgency, decide which
+specialty it belongs to, check calendar availability, and separately
+check insurance pre-authorisation rules before anything can be booked or
+recommended. This process is slow, inconsistent, and does not scale — and
+because a missed urgent case carries real patient-safety risk, it cannot
+simply be sped up by lowering the bar for caution.
+
+Your team's job is to build *CareRoute* — a multi-agent system that
+automates triage classification, specialty routing, scheduling, and
+pre-authorisation checks end-to-end. A patient enquiry arrives in plain
+text. CareRoute handles it from intake to either an appointment
+confirmation, a coverage-and-next-steps response, or an escalation brief
+for a human clinician — never a diagnosis, and never an unreviewed
+response for anything in the "always escalate" category.
+
+[IMPORTANT]
+====
+CareRoute must never present itself as providing a medical diagnosis, and
+must never independently resolve a query that falls into a pre-defined
+"always escalate" category (e.g. chest pain, breathing difficulty,
+mentions of self-harm) no matter how confident the triage agent is. This
+is a hard rule, not a tunable threshold, and evaluators will specifically
+test that it cannot be bypassed by rephrasing an urgent symptom in a way
+that looks routine.
+====
+
+---
+
+=== The Dataset and Knowledge Base
+
+Teams will work with two data sources provided by the facilitator:
+
+==== 1. CareWell Health Network Database (MySQL)
+
+[cols="1,3", options="header"]
+|===
+| Table | Contents
+
+| `patients`
+| Patient ID, name, date of birth, city, insurance plan ID,
+  registration date, prior visit count
+
+| `appointments`
+| Appointment ID, patient ID, doctor ID, specialty, scheduled date/time,
+  status (booked / completed / cancelled / no-show), enquiry ID it
+  originated from
+
+| `doctors`
+| Doctor ID, name, specialty, clinic location, weekly availability slots
+
+| `enquiries`
+| Enquiry ID, patient ID, enquiry date, raw text, triage outcome,
+  status (routine / escalated / resolved), handling agent/clinician ID
+
+| `insurance_plans`
+| Plan ID, insurer name, plan tier, covered specialties, co-pay
+  structure
+
+| `preauth_rules`
+| Procedure/specialty, insurance plan tier, pre-authorisation required
+  (Y/N), supporting documentation needed, typical turnaround time
+
+| `escalation_categories`
+| Category name (e.g. chest pain, breathing difficulty, self-harm
+  mention, paediatric high fever, pregnancy complication), mandatory
+  escalation flag (always TRUE for this table), rationale
+|===
+
+NOTE: The `escalation_categories` table is deliberately separate from
+any confidence or urgency scoring the agents produce. It exists to be
+queried directly and enforced as a hard gate, not blended into a
+weighted decision.
+
+==== 2. CareWell Health Network Knowledge Base (Filesystem)
+
+A set of Markdown files provided via the filesystem MCP server:
+
+* `specialty_referral_guidelines.md` — which symptom patterns map to
+  which specialty, and referral conventions
+* `insurance_preauth_policy.md` — full pre-authorisation policy by plan
+  tier and procedure, including documentation requirements and timelines
+* `appointment_scheduling_policy.md` — booking rules, cancellation
+  windows, and reschedule policy
+* `always_escalate_categories.md` — the authoritative, human-owned
+  definition of every symptom category that must escalate regardless of
+  model confidence, including example phrasings and known paraphrase
+  variants
+* `patient_communication_templates.md` — approved tone, phrasing, and
+  required disclaimers (including the mandatory "this is not a
+  diagnosis" language) for all patient-facing responses
+
+---
+
+=== System Architecture — The Agent Team
+
+Teams must implement the following six specialised agents. Each agent
+has one job. No agent does another agent's job.
+
+[cols="1,2,3", options="header"]
+|===
+| Agent | Role | Responsibility
+
+| `TriageAgent`
+| Enquiry triage specialist
+| Receives the raw enquiry text, assesses urgency (low / medium / high),
+  identifies the likely specialty, extracts the patient ID, and checks
+  the enquiry text against the `always_escalate_categories` definitions.
+  Returns a structured triage object that includes a `hard_escalation`
+  boolean *independent of* its own confidence score in the rest of the
+  classification.
+
+| `AvailabilityAgent`
+| Scheduling data retrieval
+| Receives the triage object, queries the MySQL database via
+  `mysql_mcp_server` to retrieve doctor availability for the relevant
+  specialty, the patient's prior appointment history, and any existing
+  open enquiries. Returns a structured scheduling context object.
+
+| `CoverageAgent`
+| Insurance and policy retrieval
+| Receives the triage object and scheduling context, queries the
+  filesystem MCP server for relevant pre-authorisation rules and
+  specialty referral guidance, and queries `preauth_rules` via
+  `mysql_mcp_server`. Returns pre-authorisation status and requirements
+  with source citations.
+
+| `ResponseAgent`
+| Patient-facing response drafter
+| Receives the scheduling and coverage context, drafts a response that
+  proposes next steps (e.g. an appointment slot, documentation needed
+  for pre-auth) using only the approved tone and disclaimers from
+  `patient_communication_templates.md`. Never produces diagnostic
+  language. Returns the draft response text.
+
+| `SafetyQAAgent`
+| Clinical-safety and compliance reviewer
+| Reviews the drafted response for three things: policy accuracy, tone
+  and disclaimer compliance, and — critically — re-verifies that the
+  `hard_escalation` flag from `TriageAgent` was honoured and that no
+  diagnostic claim slipped into the draft. Returns PASS / REVISE with
+  specific comments. If REVISE, triggers a correction loop with
+  `ResponseAgent`. A hard-escalation case can never receive a PASS that
+  produces a patient-facing resolution — only a route to `CareCoordinatorAgent`
+  for an escalation brief.
+
+| `CareCoordinatorAgent`
+| Case closure and escalation handler
+| Receives the validated response and full case context. If
+  `hard_escalation` is true, or `SafetyQAAgent` flags unresolved risk,
+  or standard escalation rules apply (e.g. no available slot within an
+  SLA, pre-auth denial), generates an escalation brief for a human
+  nurse or doctor — never a patient-facing resolution. Otherwise,
+  generates an appointment confirmation or coverage-guidance closure
+  report.
+|===
+
+NOTE: The AgentFactory Pattern must be used to instantiate all agents.
+Agent creation logic must be fully decoupled from orchestration logic.
+
+[IMPORTANT]
+====
+The hard-escalation check in `TriageAgent` and its re-verification in
+`SafetyQAAgent` must be implemented so that they cannot be talked out of
+firing by the rest of the pipeline. If `hard_escalation` is true, no
+downstream agent output — however well-reasoned, however confident —
+may override it. Teams should treat this as a gate that sits outside the
+normal LLM-scored decision path, not as one more weighted input to it.
+====
+
+---
+
+=== What the System Must Do
+
+The completed CareRoute system must handle all five enquiry scenario
+types below. Teams will be evaluated on all five during the demo.
+
+[cols="1,2,3", options="header"]
+|===
+| Scenario Type | Example Enquiry | Why it is Hard
+
+| Routine appointment request
+| "I'd like to book a follow-up with my dermatologist sometime next
+  week, my last visit was in March."
+| Straightforward pipeline — tests whether all six agents work in
+  sequence and the response correctly reflects real availability and
+  the patient's visit history.
+
+| Ambiguous symptom description
+| "I've had this weird pain on and off for a few days, not sure what
+  it is or who I should see."
+| `TriageAgent` cannot cleanly determine specialty or urgency from the
+  text. The system must handle the ambiguous case — either request
+  clarification or make a reasoned, conservative inference — without
+  crashing and without defaulting to a false sense of confidence.
+
+| Insurance pre-authorisation boundary case
+| "My doctor wants me to get an MRI for my knee. Will my insurance
+  cover it, or do I need approval first?"
+| `CoverageAgent` must correctly determine whether the specific
+  plan tier and procedure require pre-authorisation, and
+  `SafetyQAAgent` must catch a draft that incorrectly states coverage
+  is automatic when it isn't (or vice versa).
+
+| Rephrased urgent symptom (mandatory escalation bypass attempt)
+| "I've just been feeling a bit of tightness in my chest after
+  walking up the stairs, probably nothing, just wanted to ask before
+  I book a routine check-up."
+| The symptom is phrased casually and paired with a routine-sounding
+  request, but it falls squarely inside the "always escalate"
+  category. `TriageAgent`'s hard-escalation check must fire regardless
+  of the confident, low-urgency framing in the rest of the sentence.
+  This is the scenario evaluators will vary and re-test most heavily.
+
+| Follow-up on a prior open enquiry
+| "I never heard back about the referral I asked about last week for
+  my knee MRI, and now I also want to ask about a separate shoulder
+  issue."
+| `AvailabilityAgent` must retrieve the prior open enquiry and its
+  status. `ResponseAgent` must address both the outstanding item and
+  the new one in one response without contradicting or duplicating the
+  earlier interaction.
+|===
+
+---
+
+=== Technical Requirements
+
+==== Must Have
+
+* All six agents implemented using AutoGen (`AssistantAgent` /
+  `UserProxyAgent`) or CrewAI — team chooses one framework and
+  justifies the decision in the architecture document
+* AgentFactory Pattern — agent instantiation in a dedicated factory
+  class, fully separated from orchestration logic
+* At least one fixed-sequence orchestration (`RoundRobinGroupChat`
+  or CrewAI sequential flow) and one dynamic routing orchestration
+  (`SelectorGroupChat` or CrewAI Flow) — used for different enquiry
+  scenarios
+* MCP tool integration:
+** `mysql_mcp_server` — for `AvailabilityAgent` and `CoverageAgent` to
+   query patient, appointment, doctor, insurance, and escalation-
+   category tables
+** Filesystem MCP server — for `CoverageAgent` to retrieve policy
+   documents and `ResponseAgent` to retrieve communication templates
+   from the knowledge base
+* A **hard-coded, category-based escalation gate** that is checked
+  independently of any confidence score, cannot be overridden by
+  downstream agents, and is re-verified by `SafetyQAAgent` before any
+  patient-facing output is released — implemented and documented as a
+  distinct mechanism from the standard confidence-threshold escalation
+  logic
+* `SafetyQAAgent` correction loop — if review fails, `ResponseAgent`
+  receives the QA comments and regenerates the response; loop runs a
+  maximum of two times before the case is flagged for human review
+* Explicit state handoff triggers between agents — structured data
+  objects or keyword signals (e.g., `TRIAGE_COMPLETE`,
+  `HARD_ESCALATION_TRIGGERED`, `RESPONSE_APPROVED`) that prevent
+  context collapse
+* Escalation logic in `CareCoordinatorAgent` covering *both* mandatory
+  category-based escalation and standard rule-based escalation
+  (unavailable slots within SLA, pre-auth denial, prior unresolved
+  enquiry) — escalated cases produce an escalation brief, never a
+  patient-facing resolution
+* Conversational state saved to JSON after each enquiry run — loadable
+  for audit and inspection
+* Observability layer covering: step-by-step execution log, inputs
+  and outputs per agent, token usage per agent, latency per agent, and
+  total pipeline cost per enquiry
+* Every patient-facing response must include the required "this is not
+  a diagnosis" disclaimer language, verified by `SafetyQAAgent`
+* Appointment/coverage closure report for resolved enquiries and
+  escalation brief for escalated ones — both in JSON and Markdown
+
+==== Should Have
+
+* Multimodal input — `TriageAgent` can accept an image attachment
+  alongside the enquiry text (e.g., a photo of a rash or visible
+  injury) and include a description of the image in the triage object,
+  without ever converting that description into a diagnosis
+* A Streamlit or Gradio UI showing the enquiry pipeline running
+  step-by-step with live agent status and the final response or
+  escalation brief rendered in the interface
+
+==== Stretch Goals
+
+* Confidence scoring in `TriageAgent` for the *non-mandatory* portion
+  of triage (specialty routing, routine urgency grading) — kept
+  architecturally separate from the hard-escalation gate so the two
+  mechanisms cannot be conflated
+* SLA breach detection in `CareCoordinatorAgent` — if an enquiry's
+  urgency tier has a defined response-time SLA and the current time
+  exceeds it, flag the case as SLA-breached in the closure report
+* Multi-turn simulation — simulate a patient replying to the drafted
+  response with a follow-up; the system must handle the follow-up as a
+  continuation of the same enquiry with full prior context loaded from
+  the saved state
+
+---
+
+=== Day-by-Day Plan
+
+==== Day 1 — Agents, Tools, and Core Pipeline
+
+[cols="1,3"]
+|===
+| Morning
+| *Setup and TriageAgent foundation* +
+Set up the project repository, database, and knowledge base filesystem.
+Implement the AgentFactory class first — instantiate one agent through
+it and verify the pattern before building the rest. Implement
+`TriageAgent` first, including the hard-escalation gate against
+`always_escalate_categories.md`. Give it all five scenario enquiry
+texts, plus at least three additional rephrased variants of the urgent-
+symptom scenario, and verify the hard-escalation flag fires correctly
+on every variant regardless of how casually or confidently it is
+phrased. Define the triage object schema, including the
+`hard_escalation` field, that every downstream agent will consume. Do
+not move on until this gate is reliable.
+
+| Afternoon
+| *AvailabilityAgent and CoverageAgent* +
+Implement `AvailabilityAgent` with `mysql_mcp_server`. Verify it can
+retrieve doctor availability, patient appointment history, and prior
+open enquiries for each scenario. Pay particular attention to the
+follow-up scenario — the prior open enquiry must be retrieved and
+included in the context object. Implement `CoverageAgent` with the
+filesystem MCP server and `preauth_rules` table. Verify it retrieves
+the correct pre-authorisation status for each plan tier and procedure,
+with source citations, and correctly distinguishes covered from
+requires-pre-auth cases in the insurance boundary scenario.
+|===
+
+==== Day 2 — Drafting, QA Loop, Escalation, and Orchestration
+
+[cols="1,3"]
+|===
+| Morning
+| *ResponseAgent, SafetyQAAgent correction loop, and CareCoordinatorAgent* +
+Implement `ResponseAgent` — verify it produces a personalised, policy-
+accurate response for each non-escalated scenario that matches the
+tone and disclaimer requirements in `patient_communication_templates.md`.
+Implement `SafetyQAAgent` with the PASS / REVISE correction loop.
+Deliberately produce a flawed draft — missing disclaimer, incorrect
+coverage statement, or a hard-escalation case that was allowed through
+— and verify `SafetyQAAgent` catches it and either triggers a
+`ResponseAgent` correction or forces a route to `CareCoordinatorAgent`.
+Implement `CareCoordinatorAgent` with both escalation paths. Test the
+rephrased urgent-symptom scenario end-to-end — verify it produces an
+escalation brief, never a patient-facing response, regardless of the
+triage confidence score attached to the rest of the classification.
+
+| Afternoon
+| *Orchestration — fixed sequence and dynamic routing* +
+Implement fixed-sequence orchestration for the routine appointment and
+insurance boundary scenarios. Run both end-to-end and verify the
+pipeline produces correct outputs. Implement dynamic routing for the
+ambiguous symptom and rephrased urgent-symptom scenarios — the
+orchestrator must handle deviation from the standard path, including
+an immediate route to escalation, without crashing. Implement JSON
+state saving and verify a saved enquiry run can be loaded and audited.
+Run all five scenario types, plus your rephrased hard-escalation test
+variants, and document all failures.
+|===
+
+==== Day 3 — Observability, Report, and Demo
+
+[cols="1,3"]
+|===
+| Morning
+| *Observability layer and architecture document* +
+Implement the observability layer — wrap each agent call to capture
+step name, token input/output counts, latency in milliseconds, and
+estimated cost per enquiry. Log all runs to a structured JSON file.
+Run all five scenarios plus your rephrased hard-escalation variants and
+review the observability output. Identify the most expensive agent and
+the most fragile handoff. Make at least one targeted improvement based
+on what the data reveals — with priority given to hardening the
+escalation gate if any rephrased variant slipped through. Write the
+architecture document.
+
+| Afternoon
+| *Demo preparation and rehearsal* +
+Finalise the closure report and escalation brief formats. Prepare the
+15-minute demo — each team member must present at least one section.
+Rehearse the panel Q&A, including live rephrasing of an urgent symptom
+on the spot. The live demo must show the pipeline running for at least
+two scenario types — one resolved and one escalated — with the
+observability log and the final output visible.
+|===
+
+---
+
+=== Deliverables
+
+==== 1. Working System
+
+A runnable CareRoute application with:
+
+* A `README.md` with setup, database configuration, knowledge base
+  setup, and run instructions — another team must be able to run it
+  from scratch
+* AgentFactory class, all six agents, orchestration logic, MCP
+  integrations, the hard-escalation gate, the QA correction loop,
+  standard escalation logic, state management, and observability layer
+  in a clean, commented repository
+* Sample run outputs — observability logs, closure reports, and
+  escalation briefs — for all five scenario types, plus at least three
+  rephrased hard-escalation test variants, committed to the repository
+
+==== 2. Architecture Document
+
+A structured document covering:
+
+[cols="1,3", options="header"]
+|===
+| Section | What to Include
+
+| Agent design
+| Each agent's system message (full text), tools assigned, input and
+  output data contract, and why it was scoped exactly that way
+
+| Framework choice
+| AutoGen vs. CrewAI — what was evaluated and the specific reason for
+  the final decision
+
+| Orchestration design
+| Which scenarios use fixed sequence and which use dynamic routing, and
+  the reasoning behind each choice
+
+| Hard-escalation guard design
+| How the category-based mandatory escalation gate is implemented,
+  why it is architecturally separate from confidence-based escalation,
+  and evidence — including specific rephrased inputs tested — that it
+  cannot be bypassed by casual or confident phrasing
+
+| State handoff design
+| The data structure passing between each agent pair, the trigger
+  signals used, and how context collapse was prevented
+
+| MCP integration
+| Which MCP servers were used, what operations each performed, and any
+  configuration or reliability issues encountered
+
+| QA correction loop
+| How the PASS / REVISE loop was implemented, what triggered a REVISE
+  in testing, and what a corrected draft looked like versus the
+  original
+
+| Escalation logic
+| How mandatory category-based escalation and standard rule-based
+  escalation were both implemented, which scenarios triggered each, and
+  what the escalation brief contains
+
+| Observability findings
+| Token usage, latency, and cost per agent across all five scenarios.
+  Which agent was most expensive. Which handoff was most fragile.
+
+| What did not work
+| At least two things that broke during the build, the diagnosis, and
+  how they were fixed or descoped — with explicit mention of any
+  rephrased input that initially slipped past the hard-escalation gate
+
+| Lessons learned
+| One specific insight per team member on multi-agent system design,
+  and specifically on designing safety gates that must not be
+  softened by model confidence, from building CareRoute
+|===
+
+==== 3. Demo and Panel Debrief (15 minutes)
+
+[cols="1,2", options="header"]
+|===
+| Time | What Happens
+
+| 0–6 min
+| Live pipeline run — execute the rephrased urgent-symptom scenario
+  (hard-escalation path) and the insurance pre-authorisation boundary
+  scenario (QA correction loop path) end-to-end. Show agent outputs at
+  each step, the observability log, and the final output document.
+
+| 6–11 min
+| Architecture walkthrough — agent design, orchestration choice, state
+  handoffs, MCP integrations, hard-escalation guard design, QA loop,
+  escalation logic, and one key observability finding.
+
+| 11–15 min
+| Panel Q&A — see likely questions below.
+|===
+
+*Likely panel questions:*
+
+* Show me the triage object that `TriageAgent` produces for the
+  rephrased chest-tightness enquiry. Where exactly does
+  `hard_escalation` get set, and what would it take to make that flag
+  wrong?
+* I'm going to rephrase an urgent symptom right now, live. Walk me
+  through what happens in your pipeline as I type it.
+* Your `SafetyQAAgent` returned REVISE for the insurance boundary
+  scenario. Show me exactly what the comment said and how
+  `ResponseAgent` changed the response in the next iteration.
+* Walk me through the difference between how a mandatory category
+  escalation and a standard SLA-based escalation are each detected and
+  handled in `CareCoordinatorAgent`.
+* Your observability log shows `CoverageAgent` is the slowest agent.
+  What is causing that and what would you change?
+* What happens if `TriageAgent` fails to detect a hard-escalation
+  category on a genuinely ambiguous input? Where does the pipeline
+  break down, and how would you detect that failure in production
+  before a patient is affected?
+* If you had to add a seventh agent to CareRoute, what would it do and
+  where in the pipeline would it sit?
+
+---
+
+=== Evaluation Rubric
+
+[cols="3,1,3", options="header"]
+|===
+| Component | Weightage | What Assessors Look For
+
+| Working system — all five scenario types handled
+| 20%
+| Does it run reliably? Does each agent do exactly its own job? Are
+  resolved and escalated enquiries handled differently and correctly?
+
+| Hard-escalation gate — category-based, confidence-independent
+| 20%
+| Does the mandatory escalation gate fire correctly on all five
+  scenarios and, critically, on rephrased/paraphrased urgent-symptom
+  variants tested live by evaluators? Is it architecturally separate
+  from confidence-based escalation, not just a very high threshold?
+
+| Agent design and AgentFactory Pattern
+| 10%
+| Are system messages precise and structured? Is the factory pattern
+  correctly implemented with creation fully decoupled from execution?
+
+| Orchestration — fixed sequence and dynamic routing
+| 15%
+| Is the right strategy used for each scenario? Does dynamic routing
+  genuinely route on context — not a hardcoded fallback?
+
+| MCP integration and tool use
+| 10%
+| Are both MCP servers integrated and used correctly? Does
+  `CoverageAgent` retrieve accurate, cited pre-authorisation rules?
+  Does `AvailabilityAgent` retrieve prior enquiry history where
+  relevant?
+
+| QA loop, standard escalation logic, and observability
+| 15%
+| Does the correction loop produce a genuinely improved draft? Is
+  standard (non-mandatory) escalation triggered correctly? Is the
+  observability log complete and acted upon?
+
+| Architecture document and demo
+| 10%
+| Is the "what did not work" section honest and diagnostic,
+  especially regarding the hard-escalation gate? Can every team member
+  explain every design decision under panel questioning?
+|===
+
+---
+
+=== Facilitator Notes
+
+* Populate the CareWell Health Network database with realistic data:
+  at least 500 patients, 2,000+ appointments in various statuses,
+  300+ historical enquiries, a fully populated `preauth_rules` table
+  covering all specialties across all plan tiers, and an
+  `escalation_categories` table covering at minimum: chest pain,
+  breathing difficulty, self-harm mentions, paediatric high fever, and
+  pregnancy complications.
+* The `always_escalate_categories.md` file must include, alongside
+  each category, several example phrasings *and* deliberately casual
+  or minimising paraphrases of the same symptom (e.g. "a bit of
+  tightness," "probably nothing, but…") so that teams are forced to
+  build a gate that generalises rather than one that pattern-matches a
+  fixed phrase list.
+* On Day 1 afternoon, run a 15-minute check-in with each team
+  specifically to test their hard-escalation gate against three or
+  four rephrased urgent-symptom inputs you construct on the spot,
+  before `ResponseAgent` is connected. Teams that skip this build
+  responses on top of an unverified safety gate and spend Day 2
+  debugging the wrong layer.
+* During the live demo, personally rephrase an urgent symptom on the
+  spot rather than relying only on the team's prepared test cases —
+  this is the single most diagnostic moment of the assessment.
+* Seed one patient with a genuine SLA breach scenario in the
+  database — an enquiry opened 72 hours ago with no scheduled
+  appointment for a time-sensitive specialty referral. Teams
+  implementing the SLA stretch goal should discover and flag this
+  automatically.
+* Discourage teams from spending Day 2 on the Streamlit UI at the cost
+  of the hard-escalation gate and QA loop. A robust CLI pipeline with
+  a demonstrably unbypassable escalation gate scores significantly
+  higher than an unvalidated UI.
